@@ -23,7 +23,7 @@ import { deriveStreamSeed } from '../rng';
 import { createWorld } from '../world';
 import type { World } from '../world';
 import { selectIntents } from '../ai';
-import { ResourceIndex } from '../ai/perception';
+import { ResourceIndex, AgentIndex } from '../ai/perception';
 import type { TickContext } from './tick-context';
 import type { SimulationConfig } from './config';
 import { spawnInitialAgents } from './systems/spawn';
@@ -34,14 +34,18 @@ import { updateMemory } from './systems/memory-system';
 import { regenerateResources } from './systems/regeneration-system';
 import { updateDeaths } from './systems/death-system';
 import { updateAging } from './systems/aging-system';
+import { updateMortality } from './systems/mortality-system';
+import { updateReproduction } from './systems/reproduction-system';
 
 export interface SimulationRngStreams {
   /** Non-AI tick dynamics (reserved for future systems). */
   readonly sim: Rng;
-  /** Entity creation: initial spawn and future births. */
+  /** Entity creation: initial agent placement (position, needs, founding genomes). */
   readonly spawn: Rng;
   /** AI decisions: tie-breaks, explore-target selection, future planning. */
   readonly ai: Rng;
+  /** Reproduction: sex, crossover, mutation and birth randomness (Phase 3). */
+  readonly repro: Rng;
 }
 
 interface SimulationParts {
@@ -63,6 +67,8 @@ export class Simulation {
   private tickCount: number;
   /** Cumulative deaths since creation (derived state, not serialized). */
   private deaths = 0;
+  /** Cumulative births since creation (derived state, not serialized). */
+  private births = 0;
   private readonly ctx: TickContext;
 
   private constructor(parts: SimulationParts) {
@@ -83,10 +89,16 @@ export class Simulation {
       events: this.events,
       rng: this.rng.sim,
       aiRng: this.rng.ai,
+      reproRng: this.rng.repro,
       resourceIndex: new ResourceIndex(
         this.world.width,
         this.world.height,
         this.config.ai.perceptionRadiusTiles,
+      ),
+      agentIndex: new AgentIndex(
+        this.world.width,
+        this.world.height,
+        this.config.reproduction.partnerSeekRadiusTiles,
       ),
       dtHours: this.config.time.hoursPerTick,
       tick: this.tickCount,
@@ -104,6 +116,7 @@ export class Simulation {
         sim: Rng.fromSeed(deriveStreamSeed(seed, 'sim')),
         spawn: Rng.fromSeed(deriveStreamSeed(seed, 'spawn')),
         ai: Rng.fromSeed(deriveStreamSeed(seed, 'ai')),
+        repro: Rng.fromSeed(deriveStreamSeed(seed, 'repro')),
       },
     });
     spawnInitialAgents(simulation.ecs, simulation.world, simulation.config, simulation.rng.spawn, simulation.events);
@@ -120,7 +133,7 @@ export class Simulation {
     config: SimulationConfig;
     world: World;
     tickCount: number;
-    rngStates: { sim: RngState; spawn: RngState; ai: RngState };
+    rngStates: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState };
     ecs: SerializedEcs;
   }): Simulation {
     const simulation = new Simulation({
@@ -132,6 +145,7 @@ export class Simulation {
         sim: Rng.fromState(parts.rngStates.sim),
         spawn: Rng.fromState(parts.rngStates.spawn),
         ai: Rng.fromState(parts.rngStates.ai),
+        repro: Rng.fromState(parts.rngStates.repro),
       },
     });
     simulation.ecs.restore(parts.ecs);
@@ -158,19 +172,31 @@ export class Simulation {
     return this.deaths;
   }
 
+  /** Cumulative number of births since the simulation was created. */
+  get birthCount(): number {
+    return this.births;
+  }
+
   /**
    * Advance the simulation by exactly one fixed timestep.
    * System order is part of the determinism contract and must not change
    * without bumping the save format version:
    *
-   *   1. selectIntents        — decide what each agent wants (writes intents)
-   *   2. moveAgents           — travel toward movement-intent targets
-   *   3. interactWithResources— Eat/Drink: consume, relieve needs, learn
-   *   4. updateNeeds          — needs rise, energy flows, health damage/regen
-   *   5. updateDeaths         — remove agents whose health hit zero
-   *   6. updateMemory         — forget unused memories (decay + prune)
-   *   7. regenerateResources  — food/water regrow toward their caps
-   *   8. updateAging          — advance age
+   *   1.  selectIntents        — decide what each agent wants (writes intents)
+   *   2.  moveAgents           — travel toward movement-intent targets
+   *   3.  interactWithResources— Eat/Drink: consume, relieve needs, learn
+   *   4.  updateNeeds          — needs rise, energy flows, health damage/regen
+   *   5.  updateDeaths         — remove agents whose health hit zero
+   *   6.  updateMemory         — forget unused memories (decay + prune)
+   *   7.  regenerateResources  — food/water regrow toward their caps
+   *   8.  updateAging          — advance age
+   *   9.  updateMortality      — age-related health drain for elderly
+   *   10. updateReproduction   — birth children from SeekPartner pairings
+   *
+   * Reproduction runs last so children are created at age 0 (not aged this
+   * tick), and so dead/low-health agents are already removed before they could
+   * breed. Children therefore begin interacting (and being aged) on the next
+   * tick — their age is exactly 0 on the tick they are born.
    */
   step(): void {
     this.ctx.tick = this.tickCount;
@@ -182,11 +208,18 @@ export class Simulation {
     updateMemory(this.ctx); // 6. forgetting
     regenerateResources(this.ctx); // 7. regrowth
     updateAging(this.ctx); // 8. age
+    updateMortality(this.ctx); // 9. age-related mortality pressure
+    this.births += updateReproduction(this.ctx); // 10. births & lineage
     this.tickCount++;
   }
 
   /** Serializable RNG states (part of the save state). */
-  getRngStates(): { sim: RngState; spawn: RngState; ai: RngState } {
-    return { sim: this.rng.sim.getState(), spawn: this.rng.spawn.getState(), ai: this.rng.ai.getState() };
+  getRngStates(): { sim: RngState; spawn: RngState; ai: RngState; repro: RngState } {
+    return {
+      sim: this.rng.sim.getState(),
+      spawn: this.rng.spawn.getState(),
+      ai: this.rng.ai.getState(),
+      repro: this.rng.repro.getState(),
+    };
   }
 }

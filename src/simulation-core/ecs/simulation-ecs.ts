@@ -16,8 +16,10 @@ import {
   GenomeSchema,
   HealthSchema,
   IntentSchema,
+  LineageSchema,
   NeedsSchema,
   PositionSchema,
+  ReproductiveSchema,
 } from './components';
 import { MemoryStore } from '../ai/memory';
 import type { SerializedMemoryStore } from '../ai/memory';
@@ -54,6 +56,8 @@ export class SimulationEcs {
   readonly genome = new ComponentStore('genome', GenomeSchema, INITIAL_AGENT_CAPACITY);
   readonly intent = new ComponentStore('intent', IntentSchema, INITIAL_AGENT_CAPACITY);
   readonly aiState = new ComponentStore('aiState', AiStateSchema, INITIAL_AGENT_CAPACITY);
+  readonly lineage = new ComponentStore('lineage', LineageSchema, INITIAL_AGENT_CAPACITY);
+  readonly reproductive = new ComponentStore('reproductive', ReproductiveSchema, INITIAL_AGENT_CAPACITY);
 
   /** Variable-length-but-bounded per-agent memory (dedicated store, not SoA). */
   readonly memory: MemoryStore;
@@ -74,6 +78,8 @@ export class SimulationEcs {
     this.genome,
     this.intent,
     this.aiState,
+    this.lineage,
+    this.reproductive,
   ];
 
   serialize(): SerializedEcs {

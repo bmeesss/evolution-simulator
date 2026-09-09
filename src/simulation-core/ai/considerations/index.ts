@@ -6,4 +6,6 @@ export {
   distanceFactor,
   distanceFactorSquared,
   explorationUncertainty,
+  reproductionUrgency,
+  partnerDesirability,
 } from './considerations';

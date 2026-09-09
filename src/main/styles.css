@@ -217,19 +217,73 @@ input {
 /* --- AI debug / memory (selected agent) --------------------------------------- */
 
 .agent-ai-block,
-.agent-memory-block {
+.agent-memory-block,
+.agent-genome-block {
   margin-top: 8px;
   border-top: 1px solid var(--border);
   padding-top: 6px;
 }
 
 .agent-ai-block h3,
-.agent-memory-block h3 {
+.agent-memory-block h3,
+.agent-genome-block h3 {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
   margin: 6px 0 4px;
+}
+
+.genome-origins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.genome-origins li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.genome-gene {
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.genome-value {
+  min-width: 44px;
+}
+
+.genome-source {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+
+.genome-source-a {
+  color: #6ab7e0;
+}
+
+.genome-source-b {
+  color: #c88be0;
+}
+
+.genome-source-mutation {
+  color: #e0b050;
+}
+
+.genome-source-founding {
+  color: #8b96a5;
 }
 
 .ai-table {
@@ -273,6 +327,45 @@ input {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* --- Trait distributions ----------------------------------------------------- */
+
+.trait-distributions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trait-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trait-label {
+  flex: 0 0 78px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.trait-chart {
+  flex: 1;
+  height: 24px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.trait-bar {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 1px 1px 0 0;
+  opacity: 0.85;
+}
+
+.trait-bar.empty {
+  opacity: 0.15;
 }
 
 /* --- Event log --------------------------------------------------------------- */

@@ -44,10 +44,17 @@ export function spawnInitialAgents(
       thirst: rng.rangeFloat(0, spawnConfig.initialThirstMax),
       energy: rng.rangeFloat(spawnConfig.initialEnergyMin, spawnConfig.initialEnergyMax),
     });
-    ecs.age.attach(entity, { ageHours: 0 });
+    const ageHours =
+      spawnConfig.initialAgeHours +
+      (spawnConfig.initialAgeVariationHours > 0 ? rng.nextFloat() * spawnConfig.initialAgeVariationHours : 0);
+    ecs.age.attach(entity, { ageHours });
     ecs.health.attach(entity, { current: spawnConfig.initialHealth });
     const genome = randomGenomeValues(rng);
     ecs.genome.attach(entity, genome);
+    // Founding generation: generation 0, no parents.
+    ecs.lineage.attach(entity, { generation: 0, parentA: -1, parentB: -1 });
+    // Binary reproductive sex, drawn from the spawn stream (deterministic).
+    ecs.reproductive.attach(entity, { sex: rng.nextInt(2), cooldownHours: 0, eligible: 0 });
     // Wander with the target on the agent itself: the Utility AI picks a real
     // target on the first tick (keeps target-picking in the AI).
     ecs.intent.attach(entity, { kind: AgentIntent.Wander, targetX: tileX, targetY: tileY });

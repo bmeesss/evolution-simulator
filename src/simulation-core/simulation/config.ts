@@ -69,6 +69,17 @@ export interface AgentsConfig {
   spawn: {
     /** Attempts to find a land tile per spawned agent before giving up. */
     maxLandTileAttempts: number;
+    /**
+     * Starting age (lower bound) of the founding generation, in in-game hours.
+     * The spec makes *children born during the run* start at age 0; the founding
+     * generation is unconstrained and spawns as a mixed-age cohort of adults so a
+     * fresh simulation can reproduce immediately and does not hit a synchronized
+     * old-age cliff. Ages are drawn uniformly in
+     * [initialAgeHours, initialAgeHours + initialAgeVariationHours).
+     */
+    initialAgeHours: number;
+    /** Spread (in-game hours) of the founding generation's starting ages. */
+    initialAgeVariationHours: number;
     initialHungerMax: number;
     initialThirstMax: number;
     initialEnergyMin: number;
@@ -133,6 +144,101 @@ export interface ResourcesConfig {
   waterRegenPerHour: number;
 }
 
+/**
+ * Life stage thresholds (in in-game hours) and per-stage behavior modifiers.
+ * Stages influence behavior through *multipliers*, never through hardcoded
+ * per-stage branches scattered through the systems — each modifier is read from
+ * config so the balance is tunable in one place.
+ *
+ *   child       [0, childMaxAgeHours)          — no reproduction, slower, costlier
+ *   adolescent  [childMaxAgeHours, adolescentMaxAgeHours) — slower, no reproduction
+ *   adult       [adolescentMaxAgeHours, adultMaxAgeHours) — normal reproduction/movement
+ *   elderly     [adultMaxAgeHours, ∞)          — reduced movement, rising mortality
+ */
+export interface LifeStageConfig {
+  childMaxAgeHours: number;
+  adolescentMaxAgeHours: number;
+  /** Age at which agents become elderly (past this point mortality rises). */
+  adultMaxAgeHours: number;
+  /** Movement speed multiplier while a child (slower to grow up, better than 0). */
+  childMovementEfficiency: number;
+  adolescentMovementEfficiency: number;
+  adultMovementEfficiency: number;
+  elderlyMovementEfficiency: number;
+  /** Energy drain multiplier while active (costlier to be a growing child). */
+  childEnergyDrainMultiplier: number;
+  adolescentEnergyDrainMultiplier: number;
+  adultEnergyDrainMultiplier: number;
+  elderlyEnergyDrainMultiplier: number;
+}
+
+/**
+ * Reproduction tuning. Reproduction is chosen by the Utility AI only when an
+ * adult is not in an unsafe survival state; the AI's `reproductionUrgency`
+ * drops to zero as hunger/thirst/fatigue rise, so agents never breed while
+ * starving. All values are absolute/centralized for tunable natural selection.
+ */
+export interface ReproductionConfig {
+  /** Radius (tiles) within which an agent searches for a partner. */
+  partnerSeekRadiusTiles: number;
+  /** Distance (tiles) at which a seeker and partner are "close enough" to breed. */
+  partnerReachTiles: number;
+  /** Minimum health (0..100) for either parent to breed. */
+  minHealthToReproduce: number;
+  /** Minimum energy (0..100) for the seeker to bother breeding. */
+  minEnergyToReproduce: number;
+  /** Hunger AND thirst must be below this (0..100) to breed (unsafe = blocked). */
+  maxNeedToReproduce: number;
+  /** Base cooldown after a successful reproduction (in-game hours). */
+  cooldownHours: number;
+  /** Fraction of the cooldown removed at fertility 1 (higher fertility -> shorter cooldown). */
+  fertilityCooldownReduction: number;
+  /** Base Utility-AI drive to seek a partner (0..1). */
+  baseDrive: number;
+  /** Utility-AI drive added at fertility 1 (eager breeders reproduce more). */
+  fertilityDriveBoost: number;
+  /** Utility-AI drive added at social-tendency 1 (social agents seek mates more). */
+  socialDriveBoost: number;
+  childInitialHungerMax: number;
+  childInitialThirstMax: number;
+  childInitialEnergyMin: number;
+  childInitialEnergyMax: number;
+  childInitialHealth: number;
+}
+
+/**
+ * Age-related mortality. This is *gradually rising pressure*, not a hard
+ * "age > X -> die" rule: past `life.adultMaxAgeHours`, health drains at a rate
+ * that grows linearly with age, so elderly agents are increasingly at risk and
+ * are removed by the existing death system.
+ */
+export interface MortalityConfig {
+  /** Health lost per in-game hour right at the elderly threshold. */
+  elderlyHealthDrainPerHour: number;
+  /** Additional health drain per in-game hour of age past the threshold. */
+  ageHealthDrainPerHourExtra: number;
+}
+
+/**
+ * Gene trade-offs: each genome trait carries a metabolic energy cost so high
+ * values are not free. The energy drain while active is multiplied by
+ * `1 + Σ(trait * factor)` — documented in ARCHITECTURE.md §Trade-offs.
+ */
+export interface MetabolismConfig {
+  intelligenceCostFactor: number;
+  strengthCostFactor: number;
+  fertilityCostFactor: number;
+  speedCostFactor: number;
+}
+
+/** Mutation tuning (per-gene probability and additive magnitude in [0, 1]). */
+export interface MutationConfig {
+  /** Probability that a single gene mutates when a child is created. */
+  perGeneProbability: number;
+  /** Maximum magnitude of an additive mutation (delta is uniform in [-m, +m]). */
+  magnitude: number;
+}
+
 export interface SimulationConfig {
   time: TimeConfig;
   world: WorldDimensions;
@@ -142,6 +248,11 @@ export interface SimulationConfig {
   ai: AiConfig;
   memory: MemoryConfig;
   resources: ResourcesConfig;
+  life: LifeStageConfig;
+  reproduction: ReproductionConfig;
+  mortality: MortalityConfig;
+  metabolism: MetabolismConfig;
+  mutation: MutationConfig;
 }
 
 /**
@@ -196,6 +307,11 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = deepFreeze({
     initialPopulation: 50,
     spawn: {
       maxLandTileAttempts: 16,
+      // All founding agents are adults (>= adolescentMaxAgeHours) but with a wide,
+      // deterministic spread of ages up to the elderly threshold, so they can
+      // breed immediately and their deaths are staggered rather than synchronized.
+      initialAgeHours: 48,
+      initialAgeVariationHours: 672,
       initialHungerMax: 15,
       initialThirstMax: 15,
       initialEnergyMin: 60,
@@ -230,6 +346,64 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = deepFreeze({
     minWaterToDrink: 0.02,
     foodRegenPerHour: 0.05,
     waterRegenPerHour: 0.05,
+  },
+  life: {
+    childMaxAgeHours: 24,
+    adolescentMaxAgeHours: 48,
+    adultMaxAgeHours: 720,
+    childMovementEfficiency: 0.6,
+    adolescentMovementEfficiency: 0.8,
+    adultMovementEfficiency: 1,
+    elderlyMovementEfficiency: 0.75,
+    // Children are small and relatively under-active, so they burn a little
+    // less energy per active hour than adults; the cost of being an adult is
+    // the gene metabolic load (see metabolism) and the need to reproduce.
+    childEnergyDrainMultiplier: 0.8,
+    adolescentEnergyDrainMultiplier: 0.95,
+    adultEnergyDrainMultiplier: 1,
+    elderlyEnergyDrainMultiplier: 0.9,
+  },
+  reproduction: {
+    // The search radius is deliberately modest so the AgentIndex 3x3-cell walk
+    // stays local (O(agents × local density), never O(n²) — the cells would cover
+    // the whole world if the radius were as large as the map). This makes mate
+    // finding density-limited; social tendency raises how often agents seek mates.
+    partnerSeekRadiusTiles: 8,
+    partnerReachTiles: 1.5,
+    minHealthToReproduce: 50,
+    minEnergyToReproduce: 25,
+    // Breeding is only considered when an adult is genuinely comfortable: hunger
+    // AND thirst must both be comfortably below the critical band, so a hungry or
+    // thirsty agent never spawns offspring while it should be seeking food/water.
+    maxNeedToReproduce: 60,
+    // Six in-game days of cooldown after a successful birth. Reproduction is a
+    // deliberate, rare act (multiplied by how urgent survival needs are), so the
+    // population grows slowly and the founding wave can be replaced rather than
+    // exploding; fertility still shortens this for high-fertility agents.
+    cooldownHours: 144,
+    fertilityCooldownReduction: 0.5,
+    baseDrive: 0.12,
+    fertilityDriveBoost: 0.25,
+    socialDriveBoost: 0.1,
+    childInitialHungerMax: 10,
+    childInitialThirstMax: 10,
+    childInitialEnergyMin: 60,
+    childInitialEnergyMax: 100,
+    childInitialHealth: 100,
+  },
+  mortality: {
+    elderlyHealthDrainPerHour: 0.3,
+    ageHealthDrainPerHourExtra: 0.05,
+  },
+  metabolism: {
+    intelligenceCostFactor: 0.15,
+    strengthCostFactor: 0.1,
+    fertilityCostFactor: 0.05,
+    speedCostFactor: 0.06,
+  },
+  mutation: {
+    perGeneProbability: 0.08,
+    magnitude: 0.08,
   },
 } satisfies SimulationConfig);
 

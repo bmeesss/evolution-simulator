@@ -24,6 +24,8 @@ const SERIES = [
   { key: 'population', label: 'Population', color: '#e0b050', max: 1 },
   { key: 'deaths', label: 'Deaths', color: '#e2606b', max: 1 },
   { key: 'health', label: 'Avg health', color: '#5dd39e', max: 1 },
+  { key: 'fertility', label: 'Avg fertility', color: '#c88be0', max: 1 },
+  { key: 'social', label: 'Avg social', color: '#d99b6b', max: 1 },
   { key: 'food', label: 'Food avail.', color: '#8ecf50', max: 1 },
   { key: 'water', label: 'Water avail.', color: '#6ab7e0', max: 1 },
 ] as const;
@@ -40,6 +42,8 @@ export class HistoryGraph {
     population: [],
     deaths: [],
     health: [],
+    fertility: [],
+    social: [],
     food: [],
     water: [],
   };
@@ -69,6 +73,8 @@ export class HistoryGraph {
       population: Math.min(1, snapshot.population / this.initialPopulation),
       deaths: Math.min(1, snapshot.deaths / this.initialPopulation),
       health: Math.min(1, snapshot.averages.health / 100),
+      fertility: Math.min(1, snapshot.averages.fertility),
+      social: Math.min(1, snapshot.averages.socialTendency),
       food: Math.min(1, snapshot.resources.food),
       water: Math.min(1, snapshot.resources.water),
     };

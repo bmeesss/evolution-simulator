@@ -51,33 +51,41 @@ describe('snapshots', () => {
     const sim = Simulation.create(1337, DEFAULT_SIMULATION_CONFIG);
     for (let i = 0; i < 33; i++) sim.step();
     const snapshot = buildSimulationSnapshot(sim);
-    expect(snapshot.formatVersion).toBe(2);
+    expect(snapshot.formatVersion).toBe(3);
     expect(snapshot.tick).toBe(33);
     expect(snapshot.population).toBe(50);
     expect(snapshot.deaths).toBe(0);
+    expect(snapshot.births).toBe(0);
+    expect(snapshot.reproductionSuccesses).toBe(0);
+    expect(snapshot.maxGeneration).toBe(0);
     const { agents } = snapshot;
     expect(agents.ids).toHaveLength(50);
     expect(agents.x).toHaveLength(50);
     expect(agents.intentKind).toHaveLength(50);
-    for (const array of [agents.strength, agents.intelligence]) {
+    for (const array of [agents.strength, agents.intelligence, agents.speed]) {
       for (let i = 0; i < array.length; i++) {
         expect(array[i]).toBeGreaterThanOrEqual(0);
         expect(array[i]).toBeLessThanOrEqual(1);
       }
     }
-    // Intent kinds are valid AgentIntent values (0..5).
+    // Intent kinds are valid AgentIntent values (0..6).
     for (let i = 0; i < agents.intentKind.length; i++) {
       expect(agents.intentKind[i]).toBeGreaterThanOrEqual(0);
-      expect(agents.intentKind[i]).toBeLessThanOrEqual(5);
+      expect(agents.intentKind[i]).toBeLessThanOrEqual(6);
     }
     for (const value of [
       snapshot.averages.intelligence,
       snapshot.averages.strength,
       snapshot.averages.speed,
+      snapshot.averages.fertility,
+      snapshot.averages.socialTendency,
     ]) {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
+    // Average age is in in-game hours (not normalized), so it must be finite & >= 0.
+    expect(snapshot.averages.age).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(snapshot.averages.age)).toBe(true);
     for (const value of [
       snapshot.averages.hunger,
       snapshot.averages.thirst,
@@ -86,6 +94,12 @@ describe('snapshots', () => {
     ]) {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(100);
+    }
+    // Trait distributions cover the whole [0,1] range with the expected bins.
+    for (const dist of [snapshot.distributions.intelligence, snapshot.distributions.strength,
+      snapshot.distributions.speed, snapshot.distributions.fertility]) {
+      expect(dist).toHaveLength(10);
+      expect(dist.reduce((a, b) => a + b, 0)).toBe(50);
     }
     expect(snapshot.resources.food).toBeGreaterThanOrEqual(0);
     expect(snapshot.resources.food).toBeLessThanOrEqual(1);
@@ -114,8 +128,8 @@ describe('snapshots', () => {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
-    // AI debug table exposes exactly the six candidate actions.
-    expect(details!.aiUtilities).toHaveLength(6);
+    // AI debug table exposes exactly the seven candidate actions.
+    expect(details!.aiUtilities).toHaveLength(7);
     expect(details!.aiUtilities.map((row) => row.action)).toEqual([
       'Rest',
       'Wander',
@@ -123,6 +137,7 @@ describe('snapshots', () => {
       'SeekWater',
       'Eat',
       'Drink',
+      'SeekPartner',
     ]);
     for (const row of details!.aiUtilities) {
       expect(row.utility).toBeGreaterThanOrEqual(0);

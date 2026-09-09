@@ -24,7 +24,13 @@ export type SimulationEventType =
   | 'agent_drank'
   | 'agent_died'
   | 'agent_learned'
-  | 'resource_depleted';
+  | 'resource_depleted'
+  // Phase 3 — reproduction & evolution.
+  | 'reproduction_attempted'
+  | 'reproduction_success'
+  | 'birth'
+  | 'mutation'
+  | 'old_age_death';
 
 export interface SimulationEvent {
   readonly type: SimulationEventType;

@@ -15,7 +15,7 @@ import type { Rng } from '../rng';
 import type { SimulationEcs } from '../ecs';
 import type { World } from '../world';
 import type { SimulationConfig } from './config';
-import type { ResourceIndex } from '../ai/perception';
+import type { ResourceIndex, AgentIndex } from '../ai/perception';
 import type { EventLog } from '../events';
 
 export interface TickContext {
@@ -27,8 +27,12 @@ export interface TickContext {
   readonly rng: Rng;
   /** Dedicated RNG stream for AI decisions (tie-breaks, explore targets). */
   readonly aiRng: Rng;
+  /** Dedicated RNG stream for reproduction (sex, crossover, mutation, births). */
+  readonly reproRng: Rng;
   /** World-grid spatial lookup rebuilt each tick (see ai/perception). */
   readonly resourceIndex: ResourceIndex;
+  /** World-grid spatial lookup for agents rebuilt each tick (partner search). */
+  readonly agentIndex: AgentIndex;
   /** In-game hours advanced by one tick (= config.time.hoursPerTick). */
   readonly dtHours: number;
   /** Tick currently being processed (updated at the start of every step). */

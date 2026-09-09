@@ -10,10 +10,22 @@ import type { SimulationEvent } from '../simulation-core';
 const VISIBLE_EVENTS = 8;
 
 function describeEvent(event: SimulationEvent): string {
-  const parts: string[] = [event.type];
+  const parts: string[] = [eventTitle(event.type)];
   if (event.entityId !== undefined) parts.push(`agent ${event.entityId}`);
   if (event.detail !== undefined) parts.push(event.detail);
   return parts.join(' · ');
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  reproduction_attempted: 'Reproduction attempted',
+  reproduction_success: 'Reproduction success',
+  birth: 'Birth',
+  mutation: 'Mutation',
+  old_age_death: 'Old-age death',
+};
+
+function eventTitle(type: string): string {
+  return EVENT_LABELS[type] ?? type;
 }
 
 export class EventLogPanel {

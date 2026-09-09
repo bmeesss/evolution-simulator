@@ -13,6 +13,7 @@
  */
 
 import type { TickContext } from '../tick-context';
+import { lifeStageForAge, LifeStage } from '../life-stages';
 
 /** Returns the number of agents removed (used for the cumulative death count). */
 export function updateDeaths(ctx: TickContext): number {
@@ -29,7 +30,14 @@ export function updateDeaths(ctx: TickContext): number {
   if (dead === null) return 0;
 
   for (const entity of dead) {
+    // Tag old-age deaths distinctly (elderly agents removed by age pressure).
+    const ageSlot = ecs.age.index[entity];
+    const ageHours = ageSlot >= 0 ? ecs.age.columns.ageHours[ageSlot] : 0;
+    const isElderly = lifeStageForAge(ageHours, ctx.config) === LifeStage.Elderly;
+
     ctx.events.record('agent_died', { entityId: entity, detail: 'health depleted' });
+    if (isElderly) ctx.events.record('old_age_death', { entityId: entity });
+
     ecs.memory.removeAll(entity);
     ecs.position.detach(entity);
     ecs.needs.detach(entity);
@@ -38,6 +46,8 @@ export function updateDeaths(ctx: TickContext): number {
     ecs.genome.detach(entity);
     ecs.intent.detach(entity);
     ecs.aiState.detach(entity);
+    ecs.lineage.detach(entity);
+    ecs.reproductive.detach(entity);
     ecs.entities.destroy(entity);
   }
   return dead.length;
