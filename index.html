@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Evolution Simulator</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <h1>Evolution Simulator</h1>
+        <div class="controls">
+          <button id="btn-toggle-running" type="button">Start</button>
+          <label class="control">
+            Speed
+            <select id="select-speed"></select>
+          </label>
+          <label class="control">
+            Seed
+            <input id="input-seed" type="text" inputmode="numeric" spellcheck="false" />
+          </label>
+          <button id="btn-apply-seed" type="button">New World</button>
+          <button id="btn-random-seed" type="button" title="Pick a random seed and start a new world">Random</button>
+          <span id="seed-error" class="seed-error" role="alert"></span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="canvas-wrap" aria-label="World view">
+          <canvas id="world-canvas"></canvas>
+          <div id="debug-overlay" class="debug-overlay" title="Development debug overlay">
+            <div class="debug-row"><span>worker</span><span id="dbg-status">boot</span></div>
+            <div class="debug-row"><span>tick</span><span id="dbg-tick">0</span></div>
+            <div class="debug-row"><span>tps</span><span id="dbg-tps">0.0</span></div>
+            <div class="debug-row"><span>tick ms</span><span id="dbg-tick-ms">0.000</span></div>
+            <div class="debug-row"><span>ticks/slice</span><span id="dbg-slice">0</span></div>
+            <div class="debug-row"><span>agents</span><span id="dbg-agents">0</span></div>
+            <div class="debug-row"><span>fps</span><span id="dbg-fps">0</span></div>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="panel" aria-label="Simulation statistics">
+            <h2>Statistics</h2>
+            <dl class="stats">
+              <div><dt>Tick</dt><dd id="stat-tick">—</dd></div>
+              <div><dt>Time</dt><dd id="stat-time">—</dd></div>
+              <div><dt>Population</dt><dd id="stat-population">—</dd></div>
+              <div><dt>Avg intelligence</dt><dd id="stat-avg-intelligence">—</dd></div>
+              <div><dt>Avg strength</dt><dd id="stat-avg-strength">—</dd></div>
+              <div><dt>Avg speed</dt><dd id="stat-avg-speed">—</dd></div>
+            </dl>
+          </section>
+
+          <section class="panel" aria-label="Selected agent">
+            <h2 id="agent-panel-title">No agent selected</h2>
+            <p id="agent-panel-missing" class="muted">Click an agent to inspect it.</p>
+            <dl id="agent-panel-body" class="stats hidden">
+              <div><dt>Position</dt><dd><span id="agent-x">—</span>, <span id="agent-y">—</span></dd></div>
+              <div><dt>Intent</dt><dd id="agent-intent">—</dd></div>
+              <div><dt>Age</dt><dd id="agent-age">—</dd></div>
+              <div><dt>Health</dt><dd id="agent-health">—</dd></div>
+              <div><dt>Hunger</dt><dd id="agent-hunger">—</dd></div>
+              <div><dt>Thirst</dt><dd id="agent-thirst">—</dd></div>
+              <div><dt>Energy</dt><dd id="agent-energy">—</dd></div>
+              <div><dt>Intelligence</dt><dd id="agent-intelligence">—</dd></div>
+              <div><dt>Strength</dt><dd id="agent-strength">—</dd></div>
+              <div><dt>Speed</dt><dd id="agent-speed">—</dd></div>
+              <div><dt>Fertility</dt><dd id="agent-fertility">—</dd></div>
+              <div><dt>Social tendency</dt><dd id="agent-social-tendency">—</dd></div>
+            </dl>
+          </section>
+
+          <section class="panel" aria-label="Event log">
+            <h2>Events</h2>
+            <ul id="event-log-list" class="event-log"></ul>
+          </section>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main/main.ts"></script>
+  </body>
+</html>
