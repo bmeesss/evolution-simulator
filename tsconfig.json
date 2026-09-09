@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // isolatedModules + verbatimModuleSyntax force explicit `import type` usage,
+    // which keeps the main-thread bundle free of simulation-core runtime code
+    // (rendering/UI must only type-import simulation state).
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    // NOTE: noUncheckedIndexedAccess is intentionally NOT enabled. Typed-array
+    // hot loops in the simulation access SoA stores by dense index; adding
+    // `number | undefined` noise there would force non-null assertions on every
+    // line without making anything safer (indices are bounded by construction).
+    // vite/client: import.meta.env etc. node: file APIs used by tests.
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "tests", "vite.config.ts"]
+}
