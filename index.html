@@ -46,10 +46,23 @@
               <div><dt>Tick</dt><dd id="stat-tick">—</dd></div>
               <div><dt>Time</dt><dd id="stat-time">—</dd></div>
               <div><dt>Population</dt><dd id="stat-population">—</dd></div>
+              <div><dt>Deaths</dt><dd id="stat-deaths">—</dd></div>
+              <div><dt>Avg hunger</dt><dd id="stat-avg-hunger">—</dd></div>
+              <div><dt>Avg thirst</dt><dd id="stat-avg-thirst">—</dd></div>
+              <div><dt>Avg energy</dt><dd id="stat-avg-energy">—</dd></div>
+              <div><dt>Avg health</dt><dd id="stat-avg-health">—</dd></div>
               <div><dt>Avg intelligence</dt><dd id="stat-avg-intelligence">—</dd></div>
               <div><dt>Avg strength</dt><dd id="stat-avg-strength">—</dd></div>
               <div><dt>Avg speed</dt><dd id="stat-avg-speed">—</dd></div>
+              <div><dt>Food avail.</dt><dd id="stat-food">—</dd></div>
+              <div><dt>Water avail.</dt><dd id="stat-water">—</dd></div>
             </dl>
+          </section>
+
+          <section class="panel" aria-label="History graph">
+            <h2>History</h2>
+            <canvas id="history-graph" class="history-graph"></canvas>
+            <ul id="history-legend" class="history-legend"></ul>
           </section>
 
           <section class="panel" aria-label="Selected agent">
@@ -58,6 +71,7 @@
             <dl id="agent-panel-body" class="stats hidden">
               <div><dt>Position</dt><dd><span id="agent-x">—</span>, <span id="agent-y">—</span></dd></div>
               <div><dt>Intent</dt><dd id="agent-intent">—</dd></div>
+              <div><dt>Target</dt><dd><span id="agent-target-x">—</span>, <span id="agent-target-y">—</span></dd></div>
               <div><dt>Age</dt><dd id="agent-age">—</dd></div>
               <div><dt>Health</dt><dd id="agent-health">—</dd></div>
               <div><dt>Hunger</dt><dd id="agent-hunger">—</dd></div>
@@ -69,6 +83,18 @@
               <div><dt>Fertility</dt><dd id="agent-fertility">—</dd></div>
               <div><dt>Social tendency</dt><dd id="agent-social-tendency">—</dd></div>
             </dl>
+            <div id="agent-ai-block" class="agent-ai-block hidden">
+              <h3>AI — action utilities</h3>
+              <table id="agent-ai-table" class="ai-table">
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="agent-memory-block" class="agent-memory-block hidden">
+              <h3>Remembered food</h3>
+              <ul id="agent-memory-food" class="memory-list"></ul>
+              <h3>Remembered water</h3>
+              <ul id="agent-memory-water" class="memory-list"></ul>
+            </div>
           </section>
 
           <section class="panel" aria-label="Event log">

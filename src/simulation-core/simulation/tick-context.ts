@@ -3,21 +3,34 @@
  *
  * WHY a context object instead of passing arguments: it is constructed once per
  * simulation (not per tick), so systems receive everything they need without
- * any per-tick allocation, and new shared services (e.g. a spatial index) can
- * be added without touching every system signature.
+ * any per-tick allocation, and new shared services (e.g. the spatial index)
+ * can be added without touching every system signature.
+ *
+ * `tick` is the ONLY mutable field: it is updated at the start of each step so
+ * systems that stamp state (memory recency) or emit events use the tick being
+ * processed. Everything else is fixed for the simulation's lifetime.
  */
 
 import type { Rng } from '../rng';
 import type { SimulationEcs } from '../ecs';
 import type { World } from '../world';
 import type { SimulationConfig } from './config';
+import type { ResourceIndex } from '../ai/perception';
+import type { EventLog } from '../events';
 
 export interface TickContext {
   readonly ecs: SimulationEcs;
   readonly world: World;
   readonly config: SimulationConfig;
-  /** RNG stream for tick dynamics (movement decisions, etc.). */
+  readonly events: EventLog;
+  /** RNG stream for non-AI tick dynamics (reserved; unused in phase 2). */
   readonly rng: Rng;
+  /** Dedicated RNG stream for AI decisions (tie-breaks, explore targets). */
+  readonly aiRng: Rng;
+  /** World-grid spatial lookup rebuilt each tick (see ai/perception). */
+  readonly resourceIndex: ResourceIndex;
   /** In-game hours advanced by one tick (= config.time.hoursPerTick). */
   readonly dtHours: number;
+  /** Tick currently being processed (updated at the start of every step). */
+  tick: number;
 }

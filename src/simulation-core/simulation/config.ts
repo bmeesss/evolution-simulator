@@ -77,12 +77,71 @@ export interface AgentsConfig {
   };
 }
 
+export interface AiConfig {
+  /** Radius (tiles) within which an agent can perceive resource tiles. */
+  perceptionRadiusTiles: number;
+  /**
+   * Distance scale (tiles) for reachability scoring. A resource this far away
+   * scores ~0; remembered locations beyond perception still compete within it.
+   */
+  travelHorizonTiles: number;
+  /** Hunger below this produces no urge to eat (0..100). */
+  seekFoodNeedThreshold: number;
+  /** Thirst below this produces no urge to drink (0..100). */
+  seekWaterNeedThreshold: number;
+  /** Base utility of exploring when nothing else matters (0..1). */
+  explorationDrive: number;
+  /** Bonus added to the currently-selected action (prevents thrashing). */
+  hysteresisBonus: number;
+  /** Half-width of deterministic tie-break jitter added to each utility. */
+  tieBreakNoise: number;
+}
+
+export interface MemoryConfig {
+  /** Maximum remembered locations per agent. */
+  capacity: number;
+  /** Fraction a successful interaction moves a memory value toward 1. */
+  baseLearningRate: number;
+  /** Base forgetting rate per in-game hour (memory value decays toward 0). */
+  baseDecayPerHour: number;
+  /** Value a newly created memory starts at. */
+  initialValue: number;
+  /** Entries whose value falls below this are forgotten entirely. */
+  forgetThreshold: number;
+  /** Extra learning-rate multiplier at intelligence 1 (intel 0 adds nothing). */
+  intelligenceLearningFactor: number;
+  /** Fraction of base decay removed at intelligence 1 (better retention). */
+  intelligenceRetentionFactor: number;
+}
+
+export interface ResourcesConfig {
+  /** Food consumed per Eat action (fraction of the tile's [0,1] capacity). */
+  eatAmount: number;
+  /** Water consumed per Drink action (fraction of the tile's [0,1] capacity). */
+  drinkAmount: number;
+  /** Hunger points removed per Eat (0..100 scale). */
+  hungerReliefPerEat: number;
+  /** Thirst points removed per Drink (0..100 scale). */
+  thirstReliefPerDrink: number;
+  /** A tile with less food than this is treated as empty (also perception). */
+  minFoodToEat: number;
+  /** A tile with less water than this is treated as dry (also perception). */
+  minWaterToDrink: number;
+  /** Fraction of a tile's capacity regenerated per in-game hour. */
+  foodRegenPerHour: number;
+  /** Fraction of a tile's capacity regenerated per in-game hour. */
+  waterRegenPerHour: number;
+}
+
 export interface SimulationConfig {
   time: TimeConfig;
   world: WorldDimensions;
   movement: MovementConfig;
   needs: NeedsConfig;
   agents: AgentsConfig;
+  ai: AiConfig;
+  memory: MemoryConfig;
+  resources: ResourcesConfig;
 }
 
 /**
@@ -143,6 +202,34 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = deepFreeze({
       initialEnergyMax: 100,
       initialHealth: 100,
     },
+  },
+  ai: {
+    perceptionRadiusTiles: 8,
+    travelHorizonTiles: 24,
+    seekFoodNeedThreshold: 30,
+    seekWaterNeedThreshold: 30,
+    explorationDrive: 0.2,
+    hysteresisBonus: 0.08,
+    tieBreakNoise: 0.01,
+  },
+  memory: {
+    capacity: 8,
+    baseLearningRate: 0.35,
+    baseDecayPerHour: 0.03,
+    initialValue: 0.5,
+    forgetThreshold: 0.05,
+    intelligenceLearningFactor: 0.8,
+    intelligenceRetentionFactor: 0.6,
+  },
+  resources: {
+    eatAmount: 0.1,
+    drinkAmount: 0.1,
+    hungerReliefPerEat: 40,
+    thirstReliefPerDrink: 40,
+    minFoodToEat: 0.02,
+    minWaterToDrink: 0.02,
+    foodRegenPerHour: 0.05,
+    waterRegenPerHour: 0.05,
   },
 } satisfies SimulationConfig);
 

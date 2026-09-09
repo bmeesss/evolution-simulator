@@ -1,13 +1,22 @@
 /**
- * Genome -> visual property mapping.
+ * Genome -> visual property mapping, plus the per-intent state indicators.
  *
  * Documented mapping (also shown in README):
  *   - SIZE  <- genome `strength`     (bigger circle = stronger agent)
  *   - HUE   <- genome `intelligence` (blue = low, yellow = high)
  *
- * Both are pure functions of genome values, so the same genome always renders
- * the same way. Rendering consumes snapshot data only — no simulation imports.
+ * Intent state is drawn as a thin ring around the agent (or, for Rest, a
+ * dimmed body) so the behavior is visible at a glance:
+ *   - Eat   -> green ring
+ *   - Drink -> blue ring
+ *   - Rest  -> dimmed body
+ *   - moving (Wander / SeekFood / SeekWater) -> normal body
+ *
+ * All of these are pure functions of snapshot data, so the same state always
+ * renders the same way. Rendering consumes snapshot data only.
  */
+
+import { AgentIntent } from '../simulation-core/ai/intents';
 
 /** Radius in tile units at genome strength 0. */
 const BASE_RADIUS_TILES = 0.16;
@@ -22,6 +31,12 @@ const HIGH_INTELLIGENCE_HUE = 55;
 const AGENT_SATURATION = 0.65;
 const AGENT_LIGHTNESS = 0.55;
 
+const EAT_RING_COLOR = '#7ee06a';
+const DRINK_RING_COLOR = '#6ab7e0';
+
+/** Alpha applied to an agent's body while it is resting (dimmed). */
+export const RESTING_ALPHA = 0.55;
+
 export function agentRadiusTiles(strength: number): number {
   const clamped = Math.min(1, Math.max(0, strength));
   return BASE_RADIUS_TILES + clamped * STRENGTH_RADIUS_RANGE_TILES;
@@ -31,4 +46,16 @@ export function agentColor(intelligence: number): string {
   const clamped = Math.min(1, Math.max(0, intelligence));
   const hue = LOW_INTELLIGENCE_HUE + (HIGH_INTELLIGENCE_HUE - LOW_INTELLIGENCE_HUE) * clamped;
   return `hsl(${hue.toFixed(1)}, ${AGENT_SATURATION * 100}%, ${AGENT_LIGHTNESS * 100}%)`;
+}
+
+/** True when the agent's intent is Rest (used to dim the body). */
+export function isRestingIntent(kind: number): boolean {
+  return kind === AgentIntent.Rest;
+}
+
+/** Ring color for the given intent kind, or null when no ring should be drawn. */
+export function intentIndicatorColor(kind: number): string | null {
+  if (kind === AgentIntent.Eat) return EAT_RING_COLOR;
+  if (kind === AgentIntent.Drink) return DRINK_RING_COLOR;
+  return null;
 }

@@ -33,8 +33,11 @@ interface ComparableState {
   ages: Array<[number, number]>;
   healths: Array<[number, number]>;
   intents: Array<[number, number, number, number]>;
+  aiStates: Array<[number, number, number, number, number, number, number]>;
+  memory: unknown;
   rngSim: RngState;
   rngSpawn: RngState;
+  rngAi: RngState;
   events: SimulationEvent[];
 }
 
@@ -86,12 +89,26 @@ function captureComparableState(sim: Simulation): ComparableState {
       ecs.intent.columns.targetY[i],
     ]);
   }
+  const aiStates: Array<[number, number, number, number, number, number, number]> = [];
+  for (let i = 0; i < ecs.aiState.count; i++) {
+    const a = ecs.aiState.columns;
+    aiStates.push([
+      ecs.aiState.entityOf[i],
+      a.rest[i],
+      a.wander[i],
+      a.seekFood[i],
+      a.seekWater[i],
+      a.eat[i],
+      a.drink[i],
+    ]);
+  }
   positions.sort(byEntityId);
   needs.sort(byEntityId);
   genomes.sort(byEntityId);
   ages.sort(byEntityId);
   healths.sort(byEntityId);
   intents.sort(byEntityId);
+  aiStates.sort(byEntityId);
 
   return {
     tick: sim.tick,
@@ -104,8 +121,11 @@ function captureComparableState(sim: Simulation): ComparableState {
     ages,
     healths,
     intents,
+    aiStates,
+    memory: ecs.memory.serialize(),
     rngSim: sim.rng.sim.getState(),
     rngSpawn: sim.rng.spawn.getState(),
+    rngAi: sim.rng.ai.getState(),
     events: sim.events.recent(1000),
   };
 }
@@ -165,8 +185,11 @@ describe('simulation determinism (the core guarantee)', () => {
     expect(stateA.ages).toEqual(stateB.ages); // ages
     expect(stateA.healths).toEqual(stateB.healths); // health
     expect(stateA.intents).toEqual(stateB.intents); // movement targets
+    expect(stateA.aiStates).toEqual(stateB.aiStates); // AI utility scores
+    expect(stateA.memory).toEqual(stateB.memory); // memory state
     expect(stateA.rngSim).toEqual(stateB.rngSim); // RNG state (sim stream)
     expect(stateA.rngSpawn).toEqual(stateB.rngSpawn); // RNG state (spawn stream)
+    expect(stateA.rngAi).toEqual(stateB.rngAi); // RNG state (ai stream)
     expect(stateA.events).toEqual(stateB.events); // event sequence
   });
 
@@ -212,7 +235,7 @@ describe('simulation determinism (the core guarantee)', () => {
   });
 });
 
-describe('simulation behavior (phase 1)', () => {
+describe('simulation behavior (phase 2)', () => {
   it('agents remain inside the world over a long run', () => {
     const sim = Simulation.create(TEST_SEED, DEFAULT_SIMULATION_CONFIG);
     const maxX = sim.world.width - 1;
@@ -227,7 +250,7 @@ describe('simulation behavior (phase 1)', () => {
     }
   });
 
-  it('agents actually wander (positions change over time)', () => {
+  it('agents move around the world (positions change over time)', () => {
     const config = cloneConfig(DEFAULT_SIMULATION_CONFIG);
     config.needs.energyDrainPerHourActive = 0; // nobody rests: everyone wanders
     const sim = Simulation.create(TEST_SEED, config);
@@ -258,38 +281,30 @@ describe('simulation behavior (phase 1)', () => {
     }
   });
 
-  it('energy drains while active and regenerates while resting', () => {
+  it('energy regenerates while resting and drains while active', () => {
     const sim = Simulation.create(TEST_SEED, DEFAULT_SIMULATION_CONFIG);
     const intent = sim.ecs.intent;
     const needs = sim.ecs.needs;
-    const { wakeEnergyThreshold, energyRegenPerHourResting } = DEFAULT_SIMULATION_CONFIG.needs;
-    const { hoursPerTick } = DEFAULT_SIMULATION_CONFIG.time;
-    // A resting agent regenerates once per tick and wakes once it passes the
-    // wake threshold, so observed resting energy is bounded by this value.
-    const maxRestingEnergy = wakeEnergyThreshold + energyRegenPerHourResting * hoursPerTick;
+    const previousEnergy = new Map<number, number>();
 
-    let sawResting = false;
-    let sawWakeUp = false;
-    let previousRestingCount = 0;
-    for (let tick = 0; tick < 600; tick++) {
+    let sawRestingGain = false;
+    let sawActiveDrain = false;
+    for (let tick = 0; tick < 800; tick++) {
       sim.step();
-      let restingCount = 0;
-      let restingEnergyMax = 0;
       for (let i = 0; i < intent.count; i++) {
-        if (intent.columns.kind[i] !== AgentIntent.Rest) continue;
-        restingCount++;
-        const needsSlot = needs.index[intent.entityOf[i]];
-        restingEnergyMax = Math.max(restingEnergyMax, needs.columns.energy[needsSlot]);
+        const entity = intent.entityOf[i];
+        const needsSlot = needs.index[entity];
+        const energy = needs.columns.energy[needsSlot];
+        const before = previousEnergy.get(entity);
+        if (before !== undefined) {
+          if (intent.columns.kind[i] === AgentIntent.Rest && energy > before) sawRestingGain = true;
+          if (intent.columns.kind[i] !== AgentIntent.Rest && energy < before) sawActiveDrain = true;
+        }
+        previousEnergy.set(entity, energy);
       }
-      if (restingCount > 0) {
-        sawResting = true;
-        expect(restingEnergyMax).toBeLessThanOrEqual(maxRestingEnergy);
-      }
-      if (previousRestingCount > 0 && restingCount === 0) sawWakeUp = true;
-      previousRestingCount = restingCount;
     }
-    expect(sawResting).toBe(true);
-    expect(sawWakeUp).toBe(true);
+    expect(sawRestingGain).toBe(true); // resting restores energy
+    expect(sawActiveDrain).toBe(true); // activity spends energy
 
     // Needs always stay within the 0..100 scale.
     for (let i = 0; i < needs.count; i++) {
@@ -300,18 +315,15 @@ describe('simulation behavior (phase 1)', () => {
     }
   });
 
-  it('health decays when needs are critically ignored', () => {
+  it('critical unmet needs damage health and kill agents', () => {
     const config = cloneConfig(DEFAULT_SIMULATION_CONFIG);
-    config.needs.hungerPerHour = 50; // critical within ~2 ticks; no eating exists yet
+    config.needs.hungerPerHour = 100;
+    config.needs.thirstPerHour = 100;
+    config.needs.healthDrainPerHourCritical = 60;
     const sim = Simulation.create(TEST_SEED, config);
-    const health = sim.ecs.health;
-    for (let i = 0; i < 20; i++) sim.step();
-    let decayed = 0;
-    for (let i = 0; i < health.count; i++) {
-      if (health.columns.current[i] < 100) decayed++;
-    }
-    expect(decayed).toBe(health.count);
-    expect(decayed).toBeGreaterThan(0);
+    for (let i = 0; i < 80; i++) sim.step();
+    expect(sim.deathCount).toBeGreaterThan(0);
+    expect(sim.population).toBeLessThan(DEFAULT_SIMULATION_CONFIG.agents.initialPopulation);
   });
 
   it('ages agents according to the configurable hours-per-tick', () => {
@@ -326,10 +338,10 @@ describe('simulation behavior (phase 1)', () => {
     }
   });
 
-  it('keeps the initial population stable (no death in phase 1)', () => {
+  it('population never exceeds the initial population (no reproduction yet)', () => {
     const sim = Simulation.create(TEST_SEED, DEFAULT_SIMULATION_CONFIG);
     for (let i = 0; i < TICKS; i++) sim.step();
-    expect(sim.population).toBe(DEFAULT_SIMULATION_CONFIG.agents.initialPopulation);
+    expect(sim.population).toBeLessThanOrEqual(DEFAULT_SIMULATION_CONFIG.agents.initialPopulation);
   });
 
   it('protects the shared default config from accidental mutation', () => {

@@ -13,7 +13,13 @@ import type { WorldInitPayload } from '../workers/protocol';
 import type { AgentVisualSnapshot } from '../persistence';
 import type { SimulationSnapshot } from '../persistence';
 import { TerrainType } from '../simulation-core/world/terrain';
-import { agentColor, agentRadiusTiles } from './agent-visuals';
+import {
+  agentColor,
+  agentRadiusTiles,
+  intentIndicatorColor,
+  isRestingIntent,
+  RESTING_ALPHA,
+} from './agent-visuals';
 
 // Terrain palette (RGB). Named per terrain type; food tints land tiles.
 const TERRAIN_COLORS: Readonly<Record<number, readonly [number, number, number]>> = {
@@ -133,13 +139,28 @@ export class WorldRenderer {
       if (x < -radius || y < -radius || x > this.cssWidth + radius || y > this.cssHeight + radius) {
         continue; // cheap culling; a full camera/viewport system can come later
       }
+      const kind = agents.intentKind[i];
+
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fillStyle = agentColor(agents.intelligence[i]);
+      ctx.globalAlpha = isRestingIntent(kind) ? RESTING_ALPHA : 1;
       ctx.fill();
       ctx.lineWidth = 1;
       ctx.strokeStyle = AGENT_OUTLINE_COLOR;
       ctx.stroke();
+
+      // State indicator ring: eating (green) or drinking (blue).
+      const ringColor = intentIndicatorColor(kind);
+      if (ringColor !== null) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius + Math.max(1, tile * 0.16), 0, Math.PI * 2);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = ringColor;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
       if (agents.ids[i] === selectedEntityId) {
         ctx.beginPath();
         ctx.arc(x, y, radius + 3, 0, Math.PI * 2);

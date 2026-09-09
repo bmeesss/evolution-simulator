@@ -1,11 +1,12 @@
 /**
  * Needs system: hunger, thirst, energy and health dynamics.
  *
- * Phase 1 keeps this deliberately simple — needs rise over time, energy is
- * spent while active and restored while resting, and health decays when needs
- * are critical. Eating/drinking behavior arrives with Utility AI in a later
- * phase. The system iterates the dense `needs` store directly (SoA hot path,
- * zero allocation).
+ * Hunger and thirst rise over time; energy is spent while active (any
+ * non-Rest intent) and restored while resting (Rest intent); health decays
+ * while any need is critical and slowly recovers while all needs are
+ * comfortable. Eating/drinking relief is applied by the resource system, which
+ * runs before this system in the fixed order. The system iterates the dense
+ * `needs` store directly (SoA hot path, zero allocation).
  */
 
 import { NEED_MAX, NEED_MIN } from '../config';

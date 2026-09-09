@@ -23,10 +23,11 @@ is built this way, and where future systems belong. It is aimed at developers
 │  persistence/   snapshots, save-state serialization, determinism check    │
 │  simulation-core/                                                          │
 │    rng/         seeded sfc32 PRNG + stream derivation                     │
-│    ecs/         entity registry + SoA component stores                    │
+│    ecs/         entity registry + SoA component stores (+ memory store)   │
 │    world/       grid world + deterministic generation (hash noise)        │
 │    genetics/    genome definition (normalized traits)                     │
-│    ai/          intent selection (phase 1: wander/rest placeholder)       │
+│    ai/          Utility AI: intents, actions, utility curves,             │
+│                 considerations, memory, perception                        │
 │    events/      tick-stamped event log                                    │
 │    simulation/  Simulation (fixed timestep), systems, config, time        │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -98,10 +99,16 @@ state (`getState()`/`setState()`, plus `Rng.fromSeed`/`fromState`). API:
 `rangeFloat()`, `rangeInt()`, `chance()`, `pick()`.
 
 Streams: the Simulation derives independent child streams from the root seed
-by label — `sim` (tick dynamics) and `spawn` (entity creation) — via
+by label — `sim` (tick dynamics), `spawn` (entity creation) and `ai` (AI
+decisions: tie-break noise, wander-target draws) — via
 `deriveStreamSeed(seed, label)`. Changing how one stream consumes randomness
 can never affect another stream's numbers. All stream states are part of the
 save state.
+
+The Utility AI consumes the `ai` stream in a fixed order per agent (six
+tie-break jitter draws in `ActionKind` order, then wander-target draws only
+when Wander wins), so AI RNG consumption never depends on which action won —
+re-running the same state always consumes the same numbers.
 
 World generation consumes **no stream at all**: its value noise hashes
 `(seed, x, y)` directly (`rng/hash.ts` → `world/noise.ts`), so the world is a
@@ -126,43 +133,53 @@ Practical ECS: `EntityRegistry` + one `ComponentStore` per component
   `[0, count)` with `entityOf` (slot → entity) and `index` (entity → slot).
   Hot loops iterate columns directly — no objects, no lookups, no allocation.
   Capacity grows by amortized doubling.
-- **Phase-1 components**: `position` (x, y — tile units), `needs` (hunger,
-  thirst, energy — 0..100), `age` (ageHours), `health` (0..100), `genome`
+- **Components**: `position` (x, y — tile units), `needs` (hunger, thirst,
+  energy — 0..100), `age` (ageHours), `health` (0..100), `genome`
   (intelligence, strength, speed, fertility, socialTendency — normalized
-  0..1), `intent` (kind + movement target — the AI seam).
-- **Planned components** (Memory, Social, Inventory) are documented in
+  0..1), `intent` (kind + movement target — the AI seam), and `aiState`
+  (the six Utility AI base scores, persisted for the debug view and the
+  determinism tests without recomputing the AI).
+- **Memory** is a dedicated variable-length store (`ai/memory/memory-store.ts`,
+  exposed as `ecs.memory`): per-agent bounded capacity, a flat typed-array
+  arena with a free-list, and eviction of the least-valued entry. It lives
+  beside the ComponentStores on `SimulationEcs` and participates in
+  serialization.
+- **Planned components** (Social, Inventory) are documented in
   `ecs/components.ts` with the recommended storage approach. Fixed numeric
-  columns drop straight into `ComponentStore`; variable-length data (Memory)
-  will get a dedicated store type alongside it — no rewrite needed.
+  columns drop straight into `ComponentStore`.
 
 Systems (`simulation/systems/`) are plain functions
-`(ctx: TickContext) => void`. The context (ecs, world, rng, config, dtHours)
-is constructed **once** per simulation — systems cause zero per-tick
-allocation. System order inside `Simulation.step()` is part of the
-determinism contract:
+`(ctx: TickContext) => void`. The context (ecs, world, config, events, rng
+streams, resource index, dtHours) is constructed **once** per simulation —
+systems cause zero per-tick allocation. System order inside `Simulation.step()`
+is part of the determinism contract:
 
 ```
-selectIntents (ai) → moveAgents → updateNeeds → updateAging → tick++
+selectIntents → moveAgents → interactWithResources → updateNeeds
+  → updateDeaths → updateMemory → regenerateResources → updateAging → tick++
 ```
 
-`ai/` owns *decisions*; systems own *consequences*. The phase-1 behavior
-(`ai/wander-ai.ts`) is an explicitly temporary placeholder: it writes
-wander/rest intents using hysteresis thresholds only. Replacing it with
-Utility AI means writing a new module that produces richer intents in the
-same `intent` store — no other system changes.
+`ai/` owns *decisions*; systems own *consequences*. The Utility AI
+(`ai/utility-ai.ts`) scores six candidate actions with bounded [0, 1]
+utilities, applies deterministic tie-break noise + action hysteresis, and
+writes the winning intent into the same `intent` store every other system
+already reads.
 
 ## 6. World
 
-`world/world.ts`: fixed grid, four parallel typed arrays indexed by
+`world/world.ts`: fixed grid, six parallel typed arrays indexed by
 `y * width + x` — `terrain` (Uint8), `food` (Float32 0..1), `water`
-(Float32 0..1), `temperature` (Float32 °C). Generation
+(Float32 0..1), `temperature` (Float32 °C), plus `foodCap`/`waterCap`
+(Float32, the per-tile regeneration targets). Generation
 (`world/world-generator.ts`) is pure hash-noise fbm: elevation → terrain
 bands (water/sand/grass/forest/mountain), moisture → water availability and
 food per terrain type, latitude+altitude+noise → temperature. All tuning
 constants are named at the top of the generator.
 
-Phase 1 keeps tiles static after generation; the arrays exist so later phases
-(eating, regrowth, seasons) can mutate and snapshot them.
+In Phase 2, `food`/`water` mutate: the resource system reduces them as agents
+eat/drink (never below zero), and the regeneration system grows them back
+toward their caps (linear `cap * regenRate * dtHours`, clamped at the cap —
+no seasons or climate yet).
 
 ## 7. Message flow & snapshot design
 
@@ -176,11 +193,13 @@ Messages (worker → main): `ready {seed, running, multiplier, world}` ·
 `determinism-result` · `error`. Queries with a `requestId` get it echoed —
 used by the dev handle and the browser smoke test.
 
-Snapshots (`persistence/snapshots.ts`) are **compact and versioned**:
-per frame only tick/time/population/averages plus SoA typed arrays
-(ids, x, y, strength, intelligence) — a `formatVersion` field allows the
-format to evolve (delta snapshots, binary payloads) without ambiguity. Full
-per-agent data is fetched on demand via `get-agent`, so per-frame cost stays
+Snapshots (`persistence/snapshots.ts`) are **compact and versioned**
+(`SNAPSHOT_FORMAT_VERSION = 2`): per frame only tick/time/population/deaths/
+averages/resources plus SoA typed arrays (ids, x, y, strength, intelligence,
+intent kind) — a `formatVersion` field allows the format to evolve (delta
+snapshots, binary payloads) without ambiguity. Full per-agent data is fetched
+on demand via `get-agent` (which also returns the live AI utility table,
+movement target and memory lists for the inspector), so per-frame cost stays
 O(population) with small constants at 10 snapshots/second even for thousands
 of agents. The worker rate-limits snapshots to `snapshotIntervalMs` (100 ms)
 and always sends one on init/pause/resume/re-init.
@@ -190,18 +209,23 @@ and always sends one on init/pause/resume/re-init.
 `simulation-core/events/events.ts`: bounded log; every event carries
 `tick` + `timeHours` (+ optional `entityId`, `detail`). The worker drains
 pending events into each snapshot (capped at 100 per snapshot; the remainder
-follows). Phase-1 types: `simulation_started`, `simulation_reinitialized`,
-`simulation_paused`, `simulation_resumed`, `speed_changed`, `agent_spawned`.
-Event history is not persisted yet (deliberate — later phase).
+follows). Types: `simulation_started`, `simulation_reinitialized`,
+`simulation_paused`, `simulation_resumed`, `speed_changed`, `agent_spawned`,
+`agent_ate`, `agent_drank`, `agent_died`, `agent_learned`,
+`resource_depleted`. Event history is not persisted yet (deliberate — later
+phase).
 
 ## 9. Persistence
 
-`persistence/serialization.ts` defines the versioned save format capturing
-everything needed to resume bit-for-bit: seed, tick, config, RNG stream
-states, world arrays and all component stores. Round-trip and continuation
-equality are enforced by tests and by `runDeterminismCheck()`
-(`persistence/determinism-check.ts`), which the worker exposes as the
-`verify-determinism` command and the dev handle as
+`persistence/serialization.ts` defines the versioned save format
+(`SAVE_FORMAT_VERSION = 2`) capturing everything needed to resume bit-for-bit:
+seed, tick, config, RNG stream states (all three streams), world arrays
+(including the food/water caps) and all component stores plus the memory
+store. The version was bumped for Phase 2 because the schema gained the
+`aiState` component store, the memory store and the third RNG stream. Round-
+trip and continuation equality are enforced by tests and by
+`runDeterminismCheck()` (`persistence/determinism-check.ts`), which the worker
+exposes as the `verify-determinism` command and the dev handle as
 `window.__evosim.verifyDeterminism()` (dev builds only — production code has
 no global escape hatch).
 
@@ -216,26 +240,30 @@ Designed for hundreds to thousands of agents:
 
 - SoA typed arrays + dense iteration in every hot loop; zero allocation per
   tick (the tick context and all stores are pre-allocated; growth is amortized
-  doubling).
-- **No O(n²) agent loops** — phase 1 has no agent-agent interactions at all;
-  when they arrive (social system, perception), add a spatial hash keyed by
-  the existing world grid. The architecture does not prevent it: systems
-  already receive `world` in the tick context and iterate by dense slot, so a
-  spatial index can be built per tick (or incrementally) without changing
-  component storage.
+  doubling). The memory store keeps a flat arena with a free-list so
+  learn/forget churn never grows it unbounded.
+- **No O(n²) loops** — the AI builds a `ResourceIndex` (world-grid spatial
+  lookup) **once per tick** in O(worldSize) and each agent then walks only the
+  ~3×3 cells around its own cell (O(agents × localTiles)); it never scans
+  every tile per agent. All index buffers are allocated once and reused each
+  tick. The hot candidate loop uses squared distances (`distanceFactorSquared`)
+  to avoid a per-candidate sqrt.
 - Agents are never DOM elements; rendering is batched canvas circles over a
   pre-baked terrain layer (the world rasterizes once, not per frame).
 - Worker-side per-tick time is measured (EMA) and surfaced in the debug
   overlay so regressions are visible early.
 
-## 11. Phase 1 scope (what is deliberately NOT here yet)
+## 11. Phase 2 scope (what is deliberately NOT here yet)
 
-Reproduction, mutations, natural selection, advanced Utility AI, eating and
-drinking behavior, death, social relationships, tribes, culture, language,
-technology, agriculture, economy, trade, warfare, cities, civilization,
-LLM integration, neural networks. The seams for all of these exist (intent
-store for AI, genome store for inheritance, event log, save format, spatial
-partitioning plan) — later phases should extend, not rewrite.
+Evolution itself is still absent: reproduction, pregnancy, children,
+inheritance, mutation, natural selection, genealogy. Also deliberately out of
+scope (now and likely forever for this project): neural networks, LLM
+integration, NEAT; and the social/civilization ladder (tribes, culture,
+language, technology, agriculture, economy, trade, warfare, cities,
+civilization). The seams for evolution exist (genome store for inheritance,
+event log, save format) — later phases should extend, not rewrite. Learning
+stays a simple, deterministic associative update (bounded memory values +
+intelligence-modulated rates), never a neural model.
 
 ---
 
@@ -249,8 +277,8 @@ partitioning plan) — later phases should extend, not rewrite.
    (`readonly foo = new ComponentStore('foo', FooSchema, INITIAL_AGENT_CAPACITY)`)
    and add it to the fixed `stores` array (order matters for serialization —
    appending at the end is safe; inserting requires a save-format bump).
-3. Attach/detach it where agents are created/destroyed
-   (`simulation/systems/spawn.ts` today).
+3. Attach it where agents are created (`simulation/systems/spawn.ts`) and
+   detach it where they die (`simulation/systems/death-system.ts`).
 4. Bump `SAVE_FORMAT_VERSION` in `persistence/serialization.ts` if you change
    existing stores; new stores only need the version bumped if old saves must
    load (a missing store currently throws — decide the migration policy).
@@ -270,11 +298,15 @@ partitioning plan) — later phases should extend, not rewrite.
 
 ### Add a new AI action
 
-Phase-1 AI is a placeholder for Utility AI. Add action kinds to
-`AgentIntent` (`simulation-core/ai/intents.ts`) and consume them in the
-relevant systems (movement/needs today). The action *selection* lives in
-`ai/` (replace/extend `wander-ai.ts`); the *effects* live in systems. Keep
-selection deterministic: any randomness must come from `ctx.rng`.
+The Utility AI (`ai/utility-ai.ts`) scores the six `AgentIntent` actions with
+bounded utilities (built from the curves in `ai/utility/curves.ts` via the
+considerations in `ai/considerations/`). To add an action: (1) append a value
+to `AgentIntent` in `simulation-core/ai/intents.ts` (renumbering requires a
+save-format bump), (2) add its scoring + tie-break draw in the `selectIntents`
+loop (keeping the six-actions-first invariant for RNG determinism), and (3)
+implement its effects in the relevant system (movement/needs/resource). The
+*selection* lives in `ai/`; the *effects* live in systems. Keep selection
+deterministic: any randomness must come from `ctx.aiRng`.
 
 ### Add a new event
 
