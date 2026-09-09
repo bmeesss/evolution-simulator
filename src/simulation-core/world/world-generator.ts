@@ -66,6 +66,8 @@ export function createWorld(seed: number, dimensions: WorldDimensions): World {
   const food = new Float32Array(width * height);
   const water = new Float32Array(width * height);
   const temperature = new Float32Array(width * height);
+  const foodCap = new Float32Array(width * height);
+  const waterCap = new Float32Array(width * height);
 
   const elevationSeed = deriveStreamSeed(seed, 'world:elevation');
   const moistureSeed = deriveStreamSeed(seed, 'world:moisture');
@@ -96,8 +98,11 @@ export function createWorld(seed: number, dimensions: WorldDimensions): World {
         const foodProfile = FOOD_BY_TERRAIN[terrainType];
         food[index] = foodProfile.base + foodProfile.moistureWeight * moisture;
       }
+      // Regeneration targets: resources regrow back to their generated value.
+      foodCap[index] = food[index];
+      waterCap[index] = water[index];
     }
   }
 
-  return new World({ width, height, terrain, food, water, temperature });
+  return new World({ width, height, terrain, food, water, temperature, foodCap, waterCap });
 }

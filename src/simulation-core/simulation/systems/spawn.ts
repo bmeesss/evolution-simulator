@@ -48,9 +48,11 @@ export function spawnInitialAgents(
     ecs.health.attach(entity, { current: spawnConfig.initialHealth });
     const genome = randomGenomeValues(rng);
     ecs.genome.attach(entity, genome);
-    // Wander with the target on the agent itself: the movement system picks a
-    // real target on the first tick (keeps target-picking in one place).
+    // Wander with the target on the agent itself: the Utility AI picks a real
+    // target on the first tick (keeps target-picking in the AI).
     ecs.intent.attach(entity, { kind: AgentIntent.Wander, targetX: tileX, targetY: tileY });
+    // AI debug state (utility scores) starts at zero; filled every tick.
+    ecs.aiState.attach(entity);
 
     events.record('agent_spawned', { entityId: entity });
   }

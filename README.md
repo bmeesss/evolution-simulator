@@ -4,18 +4,28 @@ A browser-based evolution simulator: a **deterministic** agent simulation runnin
 on a fixed timestep inside a **Web Worker**, rendered with **Canvas 2D** — no
 game engine, no backend, no simulation framework.
 
-This repository currently contains **Phase 1: the deterministic foundation**.
-The world, agents, needs, movement and the whole simulation loop are proven
-reproducible from a seed; the evolution gameplay (reproduction, mutation,
-natural selection, Utility AI, societies, …) is deliberately **not** built yet
-and will be layered on top of this foundation (see the phase plan in
+This repository currently contains **Phase 1 (the deterministic foundation) and
+Phase 2 (Utility AI, survival and individual learning)**. The world, agents,
+needs, movement, Utility AI decisions, eating/drinking, memory and death are
+proven reproducible from a seed. Evolution itself (reproduction, mutation,
+natural selection, societies, …) is deliberately **not** built yet and will be
+layered on top of this foundation (see the phase plan in
 [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ## What you see
 
 - A 64×64 tile world generated from a seed (terrain, food, water, temperature)
-- 50 agents wandering, resting, getting hungry/thirsty/tired and unhealthy
-- Statistics (population, average genome traits), a selected-agent inspector
+- 50 agents that **decide what to do each tick**: rest, wander/explore, seek
+  food, seek water, eat or drink — scored with bounded utility curves and
+  deterministic tie-breaking
+- Agents get hungry/thirsty/tired, spend energy while active, restore it while
+  resting, take health damage when needs stay critical, and **die** when health
+  runs out
+- Food/water are consumed and regrow toward their per-tile caps; agents
+  **remember** resource locations (bounded per-agent memory that decays unless
+  re-confirmed) and **learn faster / forget slower** with higher intelligence
+- Statistics (population, deaths, needs & resource averages), a selected-agent
+  inspector (with the live Utility AI table and memory lists), a history graph
   and an event feed
 - A development overlay with tick rate, worker status, render FPS and
   simulation timing
@@ -26,6 +36,9 @@ and will be layered on top of this foundation (see the phase plan in
 | --- | --- | --- |
 | Circle size | `strength` | bigger circle = stronger agent |
 | Circle hue | `intelligence` | blue = low, yellow = high |
+| Dimmed body | (intent) | currently resting |
+| Green ring | (intent) | currently eating |
+| Blue ring | (intent) | currently drinking |
 
 Food is shown as a green tint on land tiles (denser green = more food).
 
@@ -48,7 +61,7 @@ Then open http://localhost:5173.
 | **Speed** | 1x (normal), 5x, 20x (accelerated — multiple ticks per frame) |
 | **Seed + New World** | Re-initializes a deterministic world from a seed |
 | **Random** | Picks a random seed and starts a new world |
-| **Click an agent** | Inspect it (id, age, needs, health, full genome) |
+| **Click an agent** | Inspect it (id, age, needs, health, full genome, AI utilities, memory) |
 
 The overlay in the top-left of the canvas shows worker status, current tick,
 ticks/second, per-tick simulation time, ticks per update slice, agent count and
@@ -72,9 +85,13 @@ npm run typecheck  # strict TypeScript check only
 The suite includes:
 
 - **Determinism tests** — same seed + same tick count must produce identical
-  state (world, agents, positions, needs, genome, RNG state), and
-  save → load → continue must match an uninterrupted run
+  state (world, agents, positions, needs, genome, intent, AI utility scores,
+  memory, RNG state), and save → load → continue must match an uninterrupted
+  run
 - RNG sequence/state tests, ECS store tests, world generation tests
+- **Phase-2 system tests** — utility curves & considerations, intelligence-
+  modulated learning, memory capacity/decay/eviction, needs & death dynamics,
+  resource consumption & regeneration, and Utility AI integration
 - Worker engine tests (fixed timestep, pause/speed, message protocol) against
   the real worker entry module
 - **Source hygiene tests** — fail if `Math.random` appears anywhere in `src/`,
@@ -95,8 +112,8 @@ npm run test:e2e                  # boots the app in Chromium and verifies:
 ## Determinism in one paragraph
 
 Every random decision comes from a seeded sfc32 PRNG with independent streams
-(tick dynamics, spawning) derived from the root seed; the world generator is a
-pure hash function of `(seed, x, y)`. One simulation tick advances exactly
+(tick dynamics, spawning, AI decisions) derived from the root seed; the world
+generator is a pure hash function of `(seed, x, y)`. One simulation tick advances exactly
 `hoursPerTick` in-game hours (configurable, default 0.25 = 96 ticks per
 in-game day), independent of the render frame rate. The same seed run for the
 same number of ticks always produces the same state — verified by tests and by

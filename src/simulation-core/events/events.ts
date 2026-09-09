@@ -19,7 +19,12 @@ export type SimulationEventType =
   | 'simulation_paused'
   | 'simulation_resumed'
   | 'speed_changed'
-  | 'agent_spawned';
+  | 'agent_spawned'
+  | 'agent_ate'
+  | 'agent_drank'
+  | 'agent_died'
+  | 'agent_learned'
+  | 'resource_depleted';
 
 export interface SimulationEvent {
   readonly type: SimulationEventType;

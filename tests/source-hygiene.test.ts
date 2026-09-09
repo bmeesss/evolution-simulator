@@ -94,6 +94,7 @@ describe('source hygiene', () => {
   const MAIN_THREAD_RUNTIME_IMPORT_ALLOWLIST = new Set([
     'simulation-core/world/terrain', // terrain type constants
     'simulation-core/simulation/time', // pure time formatting helpers
+    'simulation-core/ai/intents', // intent-kind constants (renderer state rings)
   ]);
 
   it('restricts main-thread runtime imports of simulation-core to pure leaf modules', () => {

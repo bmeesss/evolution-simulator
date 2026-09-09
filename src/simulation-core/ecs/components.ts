@@ -6,17 +6,18 @@
  * components are declared — see ARCHITECTURE.md ("Adding a component") for the
  * full recipe.
  *
- * PLANNED COMPONENTS (deliberately not instantiated yet — phase 1 scope):
+ * PLANNED COMPONENTS (deliberately not instantiated yet — later phases):
  * The generic ComponentStore already supports them without changes; they will
  * simply be added as new schemas + stores when their gameplay phases arrive:
  *
- * - Memory: per-agent recall of locations/events. Variable-length data does not
- *   fit fixed SoA columns; add a dedicated store type (e.g. an arena/offset
- *   scheme) alongside ComponentStore rather than forcing it in here.
  * - Social: relationship references between entities. Sparse per-entity pairs;
  *   likely a per-agent open-addressed table or a separate edge store.
  * - Inventory: carried resources. Fixed columns (e.g. per-resource counts) fit
  *   ComponentStore directly.
+ *
+ * Memory is implemented in phase 2 as a dedicated store (see
+ * `ai/memory/memory-store.ts`) because its per-agent length is variable (but
+ * bounded) — exactly the arena/offset scheme previously sketched here.
  */
 
 /** Position in tile units. Valid range: [0, worldWidth-1] x [0, worldHeight-1]. */
@@ -50,7 +51,22 @@ export const GenomeSchema = {
 /**
  * Current behavioral intent, written by the AI module and consumed by the
  * movement/needs systems. `kind` uses the AgentIntent constants; `targetX/Y`
- * is the current movement goal (tile units). This is the seam where Utility AI
- * plugs in later: it only needs to produce richer kinds/targets in this store.
+ * is the current movement goal (tile units).
  */
 export const IntentSchema = { kind: Uint8Array, targetX: Float64Array, targetY: Float64Array };
+
+/**
+ * Per-agent Utility AI scores from the most recent decision pass (the base
+ * scores, before tie-break noise and hysteresis). Persisted so the selected-
+ * agent debug view and the determinism tests can inspect "Action | Utility"
+ * without recomputing the AI (which would consume RNG). The column order must
+ * stay aligned with the action order in `ai/actions`.
+ */
+export const AiStateSchema = {
+  rest: Float32Array,
+  wander: Float32Array,
+  seekFood: Float32Array,
+  seekWater: Float32Array,
+  eat: Float32Array,
+  drink: Float32Array,
+};

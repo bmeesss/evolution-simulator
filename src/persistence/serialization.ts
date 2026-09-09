@@ -16,15 +16,20 @@ import { Simulation, World } from '../simulation-core';
 import type { SimulationConfig } from '../simulation-core';
 import type { RngState, SerializedEcs, SerializedWorld } from '../simulation-core';
 
-/** Bump on any incompatible change to the save layout. */
-export const SAVE_FORMAT_VERSION = 1;
+/**
+ * Save format version. Bumped for Phase 2 (2): the layout now includes the AI
+ * RNG stream, the memory + aiState stores, the world's resource-cap arrays and
+ * the new ai/memory/resources config sections. Version 1 saves are no longer
+ * loadable (the new sections are required).
+ */
+export const SAVE_FORMAT_VERSION = 2;
 
 export interface SimulationSaveState {
   readonly version: number;
   readonly seed: number;
   readonly tick: number;
   readonly config: SimulationConfig;
-  readonly rng: { sim: RngState; spawn: RngState };
+  readonly rng: { sim: RngState; spawn: RngState; ai: RngState };
   readonly world: SerializedWorld;
   readonly ecs: SerializedEcs;
 }

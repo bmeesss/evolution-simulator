@@ -70,9 +70,32 @@ describe('world generation', () => {
 
 describe('World (container)', () => {
   it('validates array lengths against dimensions', () => {
+    const full = () =>
+      new World({
+        width: 4,
+        height: 4,
+        terrain: new Uint8Array(16),
+        food: new Float32Array(16),
+        water: new Float32Array(16),
+        temperature: new Float32Array(16),
+        foodCap: new Float32Array(16),
+        waterCap: new Float32Array(16),
+      });
+    // A terrain array one short must throw; a complete set must not.
     expect(
-      () => new World({ width: 4, height: 4, terrain: new Uint8Array(3), food: new Float32Array(16), water: new Float32Array(16), temperature: new Float32Array(16) }),
+      () =>
+        new World({
+          width: 4,
+          height: 4,
+          terrain: new Uint8Array(3),
+          food: new Float32Array(16),
+          water: new Float32Array(16),
+          temperature: new Float32Array(16),
+          foodCap: new Float32Array(16),
+          waterCap: new Float32Array(16),
+        }),
     ).toThrow();
+    expect(() => full()).not.toThrow();
   });
 
   it('serializes and restores exactly', () => {

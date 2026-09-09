@@ -16,6 +16,7 @@ export {
   HealthSchema,
   GenomeSchema,
   IntentSchema,
+  AiStateSchema,
 } from './components';
-export { SimulationEcs, INITIAL_AGENT_CAPACITY } from './simulation-ecs';
+export { SimulationEcs, INITIAL_AGENT_CAPACITY, DEFAULT_MEMORY_CAPACITY } from './simulation-ecs';
 export type { SerializedEcs } from './simulation-ecs';

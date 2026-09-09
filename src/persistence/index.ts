@@ -13,8 +13,11 @@ export {
 export type {
   AgentVisualSnapshot,
   SimulationAverages,
+  ResourceAvailability,
   SimulationSnapshot,
   AgentDetails,
+  AgentMemoryEntryDetails,
+  AiUtilityEntry,
 } from './snapshots';
 export { runDeterminismCheck } from './determinism-check';
 export type { DeterminismCheckResult } from './determinism-check';

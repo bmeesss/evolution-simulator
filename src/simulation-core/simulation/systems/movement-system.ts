@@ -1,29 +1,25 @@
 /**
- * Movement system: moves wandering agents toward their current target.
+ * Movement system: moves agents toward their intent target.
  *
- * Speed is derived from the genome `speed` trait. When a target is reached, a
- * new one is drawn from the tick RNG within the wander radius — RNG draws
- * happen only on retarget, in dense-slot order, which keeps the whole
- * simulation deterministic. Positions are clamped to the valid world range so
- * agents can never leave it.
+ * The AI (selectIntents) already decided WHERE an agent wants to go and wrote
+ * the target into the `intent` store; this system only executes that movement
+ * for movement intents (Wander/SeekFood/SeekWater). Rest/Eat/Drink are
+ * stationary and are skipped. Target picking (including wander targets) lives
+ * entirely in the AI so all randomness stays on the `ai` RNG stream.
  *
- * Note on determinism: we use sqrt(dx*dx + dy*dy) rather than Math.hypot —
- * hypot is allowed extra precision freedom per the ECMAScript spec, which
- * could differ between engines.
+ * Speed is derived from the genome `speed` trait. Positions are clamped to the
+ * valid world range so agents can never leave it.
+ *
+ * Determinism note: we use sqrt(dx*dx + dy*dy) rather than Math.hypot — hypot
+ * is allowed extra precision freedom per the ECMAScript spec, which could
+ * differ between engines.
  */
 
 import type { TickContext } from '../tick-context';
-import { AgentIntent } from '../../ai';
-
-/** Clamp to [min, max], reflecting values that fall outside an edge back inside. */
-function mirrorClamp(value: number, min: number, max: number): number {
-  if (value < min) value = min + (min - value);
-  if (value > max) value = max - (value - max);
-  return Math.min(max, Math.max(min, value));
-}
+import { isMovementIntent } from '../../ai';
 
 export function moveAgents(ctx: TickContext): void {
-  const { ecs, world, rng, config, dtHours } = ctx;
+  const { ecs, world, config, dtHours } = ctx;
   const intent = ecs.intent;
   const position = ecs.position;
   const genome = ecs.genome;
@@ -32,10 +28,9 @@ export function moveAgents(ctx: TickContext): void {
   const maxY = world.height - 1;
   const reachDistance = config.movement.targetReachedDistanceTiles;
   const reachSquared = reachDistance * reachDistance;
-  const wanderRadius = config.movement.wanderTargetRadiusTiles;
 
   for (let i = 0; i < intent.count; i++) {
-    if (intent.columns.kind[i] !== AgentIntent.Wander) continue;
+    if (!isMovementIntent(intent.columns.kind[i])) continue;
     const entity = intent.entityOf[i];
     const positionSlot = position.index[entity];
     const genomeSlot = genome.index[entity];
@@ -43,14 +38,6 @@ export function moveAgents(ctx: TickContext): void {
 
     let x = position.columns.x[positionSlot];
     let y = position.columns.y[positionSlot];
-
-    if (intent.columns.targetX[i] === x && intent.columns.targetY[i] === y) {
-      // Target trivially reached (also the wake-from-rest signal): pick a new one.
-      const offsetX = (rng.nextFloat() * 2 - 1) * wanderRadius;
-      const offsetY = (rng.nextFloat() * 2 - 1) * wanderRadius;
-      intent.columns.targetX[i] = mirrorClamp(x + offsetX, 0, maxX);
-      intent.columns.targetY[i] = mirrorClamp(y + offsetY, 0, maxY);
-    }
 
     const targetX = intent.columns.targetX[i];
     const targetY = intent.columns.targetY[i];

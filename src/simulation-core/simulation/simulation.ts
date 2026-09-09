@@ -23,18 +23,25 @@ import { deriveStreamSeed } from '../rng';
 import { createWorld } from '../world';
 import type { World } from '../world';
 import { selectIntents } from '../ai';
+import { ResourceIndex } from '../ai/perception';
 import type { TickContext } from './tick-context';
 import type { SimulationConfig } from './config';
 import { spawnInitialAgents } from './systems/spawn';
 import { moveAgents } from './systems/movement-system';
 import { updateNeeds } from './systems/needs-system';
+import { interactWithResources } from './systems/resource-system';
+import { updateMemory } from './systems/memory-system';
+import { regenerateResources } from './systems/regeneration-system';
+import { updateDeaths } from './systems/death-system';
 import { updateAging } from './systems/aging-system';
 
 export interface SimulationRngStreams {
-  /** Tick dynamics: movement target selection, future AI tie-breaks, etc. */
+  /** Non-AI tick dynamics (reserved for future systems). */
   readonly sim: Rng;
   /** Entity creation: initial spawn and future births. */
   readonly spawn: Rng;
+  /** AI decisions: tie-breaks, explore-target selection, future planning. */
+  readonly ai: Rng;
 }
 
 interface SimulationParts {
@@ -54,6 +61,8 @@ export class Simulation {
   readonly rng: SimulationRngStreams;
 
   private tickCount: number;
+  /** Cumulative deaths since creation (derived state, not serialized). */
+  private deaths = 0;
   private readonly ctx: TickContext;
 
   private constructor(parts: SimulationParts) {
@@ -61,7 +70,7 @@ export class Simulation {
     this.config = parts.config;
     this.world = parts.world;
     this.tickCount = parts.tickCount;
-    this.ecs = new SimulationEcs();
+    this.ecs = new SimulationEcs(parts.config.memory.capacity);
     this.rng = parts.rng;
     this.events = new EventLog(() => ({
       tick: this.tickCount,
@@ -71,8 +80,16 @@ export class Simulation {
       ecs: this.ecs,
       world: this.world,
       config: this.config,
+      events: this.events,
       rng: this.rng.sim,
+      aiRng: this.rng.ai,
+      resourceIndex: new ResourceIndex(
+        this.world.width,
+        this.world.height,
+        this.config.ai.perceptionRadiusTiles,
+      ),
       dtHours: this.config.time.hoursPerTick,
+      tick: this.tickCount,
     };
   }
 
@@ -86,6 +103,7 @@ export class Simulation {
       rng: {
         sim: Rng.fromSeed(deriveStreamSeed(seed, 'sim')),
         spawn: Rng.fromSeed(deriveStreamSeed(seed, 'spawn')),
+        ai: Rng.fromSeed(deriveStreamSeed(seed, 'ai')),
       },
     });
     spawnInitialAgents(simulation.ecs, simulation.world, simulation.config, simulation.rng.spawn, simulation.events);
@@ -95,14 +113,14 @@ export class Simulation {
 
   /**
    * Rebuild a simulation from persisted state (see persistence/serialization).
-   * The event history is not persisted in phase 1 — the log starts empty.
+   * The event history is not persisted — the log starts empty on restore.
    */
   static restore(parts: {
     seed: number;
     config: SimulationConfig;
     world: World;
     tickCount: number;
-    rngStates: { sim: RngState; spawn: RngState };
+    rngStates: { sim: RngState; spawn: RngState; ai: RngState };
     ecs: SerializedEcs;
   }): Simulation {
     const simulation = new Simulation({
@@ -113,6 +131,7 @@ export class Simulation {
       rng: {
         sim: Rng.fromState(parts.rngStates.sim),
         spawn: Rng.fromState(parts.rngStates.spawn),
+        ai: Rng.fromState(parts.rngStates.ai),
       },
     });
     simulation.ecs.restore(parts.ecs);
@@ -134,21 +153,40 @@ export class Simulation {
     return this.ecs.entities.aliveCount;
   }
 
+  /** Cumulative number of deaths since the simulation was created. */
+  get deathCount(): number {
+    return this.deaths;
+  }
+
   /**
    * Advance the simulation by exactly one fixed timestep.
    * System order is part of the determinism contract and must not change
-   * without bumping the save format version.
+   * without bumping the save format version:
+   *
+   *   1. selectIntents        — decide what each agent wants (writes intents)
+   *   2. moveAgents           — travel toward movement-intent targets
+   *   3. interactWithResources— Eat/Drink: consume, relieve needs, learn
+   *   4. updateNeeds          — needs rise, energy flows, health damage/regen
+   *   5. updateDeaths         — remove agents whose health hit zero
+   *   6. updateMemory         — forget unused memories (decay + prune)
+   *   7. regenerateResources  — food/water regrow toward their caps
+   *   8. updateAging          — advance age
    */
   step(): void {
-    selectIntents(this.ctx); // 1. decide what agents want to do
-    moveAgents(this.ctx); // 2. act on movement intents
-    updateNeeds(this.ctx); // 3. apply need/health dynamics
-    updateAging(this.ctx); // 4. advance age
+    this.ctx.tick = this.tickCount;
+    selectIntents(this.ctx); // 1. decision
+    moveAgents(this.ctx); // 2. travel
+    interactWithResources(this.ctx); // 3. eat / drink / learn
+    updateNeeds(this.ctx); // 4. need & health dynamics
+    this.deaths += updateDeaths(this.ctx); // 5. death (health <= 0)
+    updateMemory(this.ctx); // 6. forgetting
+    regenerateResources(this.ctx); // 7. regrowth
+    updateAging(this.ctx); // 8. age
     this.tickCount++;
   }
 
   /** Serializable RNG states (part of the save state). */
-  getRngStates(): { sim: RngState; spawn: RngState } {
-    return { sim: this.rng.sim.getState(), spawn: this.rng.spawn.getState() };
+  getRngStates(): { sim: RngState; spawn: RngState; ai: RngState } {
+    return { sim: this.rng.sim.getState(), spawn: this.rng.spawn.getState(), ai: this.rng.ai.getState() };
   }
 }
