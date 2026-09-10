@@ -17,6 +17,8 @@ export {
   GenomeSchema,
   IntentSchema,
   AiStateSchema,
+  CultureStateSchema,
+  NO_FORAGE_TICK,
 } from './components';
 export { SimulationEcs, INITIAL_AGENT_CAPACITY, DEFAULT_MEMORY_CAPACITY } from './simulation-ecs';
 export type { SerializedEcs } from './simulation-ecs';

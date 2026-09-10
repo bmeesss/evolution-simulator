@@ -19,6 +19,13 @@
  *      candidate for Socialize / Help / Cooperate with cheap arithmetic.
  *      These three actions can target strangers, so they need discovery.
  *
+ * Phase 5 adds two more outputs to the SAME walk (never a second pass):
+ *   - a TEACH candidate: a nearby agent that does not already hold the item the
+ *     teacher could pass on (the teacher's item is supplied as a scratch query,
+ *     so the check costs one bounded store lookup per candidate),
+ *   - an AUDIENCE count: how many agents are within hearing range, which is
+ *     what makes a signal worth emitting (signalling nobody is wasted effort).
+ *
  * Results are written into a reused module-level scratch object (consumed
  * immediately by the caller — never retained). This mirrors the established
  * `partnerScratch` pattern: no per-tick allocation.
@@ -42,6 +49,7 @@ import {
   confrontationAdvantage,
 } from './considerations';
 import { KinshipType, kinshipBetween } from '../social/kinship';
+import type { CulturalMemoryStore } from '../culture';
 
 /** Query result scratch — read immediately after findSocialTargets(). */
 export interface SocialTargets {
@@ -67,7 +75,32 @@ export interface SocialTargets {
   threatScore: number;
   /** Vulnerability-weighted avoid utility (threat × vulnerability). */
   avoidScore: number;
+  /** Phase 5: best nearby agent to teach (that lacks the teacher's item). */
+  teachId: EntityId;
+  teachX: number;
+  teachY: number;
+  teachScore: number;
+  /** Phase 5: agents within hearing range of a signal from this position. */
+  audience: number;
+  /** `audience` normalised by `culture.signals.audienceForFullUtility`, in [0,1]. */
+  audienceScore: number;
 }
+
+/**
+ * The item an agent could teach this tick, supplied by the caller as reusable
+ * scratch (`strength: 0` = nothing to teach). Passing it in keeps the candidate
+ * loop free of any per-candidate search over the teacher's own memory.
+ */
+export interface TeachQuery {
+  type: number;
+  tileX: number;
+  tileY: number;
+  variantId: number;
+  strength: number;
+}
+
+/** "Nothing to teach" query — the default, used by callers/tests that do not query teaching. */
+export const NO_TEACH_QUERY: TeachQuery = { type: -1, tileX: -1, tileY: -1, variantId: 0, strength: 0 };
 
 export const socialTargets: SocialTargets = {
   socializeId: -1,
@@ -91,6 +124,12 @@ export const socialTargets: SocialTargets = {
   threatY: 0,
   threatScore: 0,
   avoidScore: 0,
+  teachId: -1,
+  teachX: 0,
+  teachY: 0,
+  teachScore: 0,
+  audience: 0,
+  audienceScore: 0,
 };
 
 /**
@@ -135,8 +174,12 @@ export function findSocialTargets(
   config: SimulationConfig,
   socialIndex: AgentIndex,
   tick: number,
+  teachQuery: TeachQuery = NO_TEACH_QUERY,
 ): void {
   const social = config.social;
+  const culturalMemory: CulturalMemoryStore = ecs.culturalMemory;
+  const hearingSq = config.culture.signals.hearingRadiusTiles * config.culture.signals.hearingRadiusTiles;
+  const audienceForFull = Math.max(1, config.culture.signals.audienceForFullUtility);
   const perceptionSq = social.perception.radiusTiles * social.perception.radiusTiles;
   const relationships = ecs.relationships;
   const position = ecs.position;
@@ -166,6 +209,11 @@ export function findSocialTargets(
   let threatX = 0;
   let threatY = 0;
   let bestAvoid = 0;
+  let bestTeach = 0;
+  let teachId = -1;
+  let teachX = 0;
+  let teachY = 0;
+  let audience = 0;
 
   // Index the agent's own relationships for O(1) candidate lookups, and —
   // in the same bounded (<= capacity) walk — evaluate the MEMORY-driven
@@ -280,6 +328,37 @@ export function findSocialTargets(
 
         const proximity = distanceFactorSquared(distSq, perceptionSq);
 
+        // --- Phase 5: who could hear a signal from here? --------------------
+        if (distSq <= hearingSq) audience++;
+
+        // --- Phase 5: Teach — a nearby agent that lacks the teacher's item --
+        // The gap shrinks as the learner's own version approaches the teacher's
+        // strength, so a teacher stops pursuing someone who already knows it.
+        // Affinity/familiarity reuse the same curve as Socialize (people teach
+        // those they know and like), and strangers are teachable too.
+        if (teachQuery.strength > 0) {
+          const learnerHolds = culturalMemory.strengthOf(
+            candidate,
+            teachQuery.type,
+            teachQuery.tileX,
+            teachQuery.tileY,
+            teachQuery.variantId,
+          );
+          if (learnerHolds < teachQuery.strength) {
+            const gap = 1 - clamp01(learnerHolds / teachQuery.strength);
+            const teachAffinity = hasRelationship
+              ? clamp01(relationshipAffinity(score) * (0.4 + 0.6 * clamp01(familiarity)))
+              : social.socialize.strangerOpenness;
+            const teachCandidate = proximity * clamp01(0.25 + 0.75 * teachAffinity) * gap;
+            if (teachCandidate > bestTeach) {
+              bestTeach = teachCandidate;
+              teachId = candidate;
+              teachX = cx;
+              teachY = cy;
+            }
+          }
+        }
+
         // --- Socialize: bonds beat strangers, familiar beats unknown -------
         let affinity: number;
         if (hasRelationship) {
@@ -364,6 +443,12 @@ export function findSocialTargets(
   socialTargets.threatY = threatY;
   socialTargets.threatScore = bestThreat;
   socialTargets.avoidScore = bestAvoid;
+  socialTargets.teachId = teachId;
+  socialTargets.teachX = teachX;
+  socialTargets.teachY = teachY;
+  socialTargets.teachScore = bestTeach;
+  socialTargets.audience = audience;
+  socialTargets.audienceScore = clamp01(audience / audienceForFull);
 }
 
 /** Strength genome of an entity (0 when absent) — used for avoid/confront. */

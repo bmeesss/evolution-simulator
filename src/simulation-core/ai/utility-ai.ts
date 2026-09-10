@@ -50,7 +50,15 @@ import type { MemoryStore } from './memory';
 import type { ResourceIndex } from './perception';
 import type { AgentIndex } from './perception';
 import { findSocialTargets, socialTargets } from './social-targeting';
+import type { TeachQuery } from './social-targeting';
 import { areKin } from '../social/kinship';
+import {
+  NormId,
+  collectCulturalEffects,
+  createCulturalEffects,
+  normStrength,
+  techniqueTerrainFactor,
+} from '../culture';
 import { clamp01 } from './utility';
 import {
   fatigueUrgency,
@@ -188,6 +196,47 @@ function findBestResource(
 const partnerScratch = { entityId: -1, x: 0, y: 0, score: -1 };
 
 /**
+ * Reused cultural-effects scratch (Phase 5): one bounded walk over an agent's
+ * cultural chain per tick feeds every culture-driven utility below. Read
+ * immediately; never retained (same contract as `partnerScratch`).
+ */
+const culturalScratch = createCulturalEffects();
+
+/**
+ * Reused teach-query scratch (Phase 5): the item the agent could teach this
+ * tick, filled before the social-targeting walk and consumed by it. `strength`
+ * is 0 when the agent has nothing confident enough to pass on.
+ */
+const teachQuery: TeachQuery = { type: -1, tileX: -1, tileY: -1, variantId: 0, strength: 0 };
+
+/**
+ * Fill `teachQuery` with the agent's strongest confident item (>= the config
+ * "known" threshold) — one bounded walk over its cultural chain. A teacher
+ * always starts from its most established piece of knowledge; the culture
+ * system narrows this to the exact item a learner still lacks at execution.
+ */
+function fillTeachQuery(
+  culturalMemory: SimulationEcs['culturalMemory'],
+  entity: EntityId,
+  knownThreshold: number,
+): void {
+  teachQuery.strength = 0;
+  teachQuery.type = -1;
+  teachQuery.tileX = -1;
+  teachQuery.tileY = -1;
+  teachQuery.variantId = 0;
+  for (let e = culturalMemory.headOf(entity); e !== -1; e = culturalMemory.nextOf(e)) {
+    const strength = culturalMemory.entryStrength(e);
+    if (strength < knownThreshold || strength <= teachQuery.strength) continue;
+    teachQuery.strength = strength;
+    teachQuery.type = culturalMemory.entryType(e);
+    teachQuery.tileX = culturalMemory.entryTileX(e);
+    teachQuery.tileY = culturalMemory.entryTileY(e);
+    teachQuery.variantId = culturalMemory.entryVariant(e);
+  }
+}
+
+/**
  * Kin check for the partner filter — thin wrapper over the shared kinship
  * module (social/kinship.ts) so the social layer and the reproduction layer
  * can never disagree about who is family.
@@ -309,6 +358,8 @@ export function selectIntents(ctx: TickContext): void {
   const memory = ecs.memory;
 
   const { ai, resources, movement } = config;
+  const cultureConfig = config.culture;
+  const behavior = cultureConfig.behavior;
   const minFood = resources.minFoodToEat;
   const minWater = resources.minWaterToDrink;
   const eatAmount = resources.eatAmount;
@@ -390,9 +441,52 @@ export function selectIntents(ctx: TickContext): void {
     const foodHere = world.food[tileIdx];
     const waterHere = world.water[tileIdx];
 
-    // --- Social targets: ONE bounded walk covers all five actions (Phase 4) --
+    // --- Cultural context (Phase 5) -----------------------------------------
+    // ONE bounded walk over the agent's own knowledge; everything culture adds
+    // to behaviour is read from here (beliefs, technique, norms) plus the
+    // scalar culture component (cooldowns, alert). Knowing nothing leaves every
+    // factor at 1, so an uncultured agent behaves exactly like Phase 4.
+    collectCulturalEffects(ecs.culturalMemory, entity, culturalScratch);
+    const cultureSlot = ecs.culture.index[entity];
+    const teachCooldownTicks = cultureSlot >= 0 ? ecs.culture.columns.teachCooldownTicks[cultureSlot] : 0;
+    const signalCooldownTicks = cultureSlot >= 0 ? ecs.culture.columns.signalCooldownTicks[cultureSlot] : 0;
+    const alerted = cultureSlot >= 0 && ecs.culture.columns.alertTicks[cultureSlot] > 0;
+    // A technique helps most on its home terrain and only partly elsewhere.
+    const techniqueFactor =
+      culturalScratch.techniqueStrength > 0
+        ? 1 +
+          behavior.techniqueEfficiencyBonus *
+            culturalScratch.techniqueStrength *
+            techniqueTerrainFactor(
+              culturalScratch.techniqueVariant,
+              world.terrain[tileIdx],
+              1,
+              behavior.foreignHabitatFactor,
+            )
+        : 1;
+    // A believed location is worth travelling to — but ONLY when the need
+    // cannot be satisfied where the agent already stands. Without that guard a
+    // strong belief inflates Seek* above the Eat/Drink utility of the food or
+    // water underfoot, and agents walk away from a full tile to chase a stale
+    // memory (observed as a population collapse under high discovery rates).
+    const needsToTravelForFood = foodHere < minFood;
+    const needsToTravelForWater = waterHere < minWater;
+    const knownFoodLift =
+      culturalScratch.foodKnown && needsToTravelForFood
+        ? 1 + behavior.knownLocationValue * culturalScratch.foodStrength
+        : 1;
+    const knownWaterLift =
+      culturalScratch.waterKnown && needsToTravelForWater
+        ? 1 + behavior.knownLocationValue * culturalScratch.waterStrength
+        : 1;
+    const normHelp = normStrength(culturalScratch, NormId.HelpOthers);
+    const normShare = normStrength(culturalScratch, NormId.ShareFood);
+    const normAvoid = normStrength(culturalScratch, NormId.AvoidConflict);
+
+    // --- Social targets: ONE bounded walk covers all social actions ---------
     const socialSlot = ecs.social.index[entity];
     const loneliness = socialSlot >= 0 ? ecs.social.columns.loneliness[socialSlot] : 0;
+    fillTeachQuery(ecs.culturalMemory, entity, cultureConfig.memory.knownThreshold);
     findSocialTargets(
       entity,
       x,
@@ -405,14 +499,15 @@ export function selectIntents(ctx: TickContext): void {
       config,
       socialIndex,
       tick,
+      teachQuery,
     );
 
     // --- Base utilities (bounded to [0, 1]) ----------------------------------
     const uRest = uFatigue;
     const uWander = ai.explorationDrive * explorationUncertainty(averageMemoryValue(memory, entity));
-    const uSeekFood = uHunger * foodScore;
-    const uSeekWater = uThirst * waterScore;
-    const uEat = foodHere >= minFood ? uHunger * clamp01(foodHere / eatAmount) : 0;
+    const uSeekFood = clamp01(uHunger * foodScore * knownFoodLift * techniqueFactor);
+    const uSeekWater = clamp01(uThirst * waterScore * knownWaterLift);
+    const uEat = foodHere >= minFood ? uHunger * clamp01(foodHere / eatAmount) * techniqueFactor : 0;
     const uDrink = waterHere >= minWater ? uThirst * clamp01(waterHere / drinkAmount) : 0;
     const uSeekPartner = reproductionUrgency(
       ageHours,
@@ -437,10 +532,78 @@ export function selectIntents(ctx: TickContext): void {
     // urgent hunger makes it compelling (0.3 base mirrors baseDrive patterns).
     const forageNeed = 0.3 + 0.7 * uHunger;
     const uSocialize = lonelinessUrgency(loneliness, config) * drive * safety * socialTargets.socializeScore;
-    const uHelp = drive * safety * helperCapacity * socialTargets.helpScore;
-    const uCooperate = drive * safety * forageNeed * socialTargets.cooperateScore;
-    const uAvoid = socialTargets.avoidScore;
-    const uConfront = socialTargets.confrontScore;
+    const uHelp = clamp01(
+      drive * safety * helperCapacity * socialTargets.helpScore * (1 + behavior.normHelpBoost * normHelp),
+    );
+    const uCooperate = clamp01(
+      drive * safety * forageNeed * socialTargets.cooperateScore * techniqueFactor * (1 + behavior.normShareBoost * normShare),
+    );
+    // An agent that HEARD AND UNDERSTOOD a danger signal stays warier for the
+    // alert window: knowledge changes the utility of avoiding, i.e. culture
+    // feeds back into behaviour without any scripted response.
+    const uAvoid = clamp01(socialTargets.avoidScore * (1 + behavior.alertBoost * (alerted ? 1 : 0)));
+    // A restraint norm does not forbid confrontation: it damps the MARGINAL
+    // urges ("this rival annoys me") while yielding to desperation ("I am
+    // starving and this is the last patch"). `normAvoidSpan` is the utility
+    // above which the norm stops damping, so deep hostility, real hunger and a
+    // genuine edge still produce a fight when they exist.
+    const restraintDamping =
+      behavior.normAvoidDampening *
+      normAvoid *
+      clamp01(1 - socialTargets.confrontScore / Math.max(1e-6, behavior.normAvoidSpan));
+    const uConfront = clamp01(socialTargets.confrontScore * (1 - restraintDamping));
+
+    // --- Phase 5 actions: teaching and proto-communication -------------------
+    // Teaching is a costly favour: it needs a confident item to pass on, spare
+    // energy/health, an off-cooldown attention budget and a nearby learner.
+    const driveConfig = cultureConfig.signals.drive;
+    const teachAffordability = clamp01(
+      (energy - cultureConfig.transmission.minTeacherEnergy) /
+        Math.max(1, 100 - cultureConfig.transmission.minTeacherEnergy),
+    );
+    // READINESS is the weakest link, not the product: stacking safety,
+    // affordability, capacity, item strength AND candidate score multiplicatively
+    // makes teaching vanish (five sub-1 factors), so the three readiness terms
+    // are combined with min() and only the item strength and learner score
+    // scale the result. That keeps the formula interpretable and lets a
+    // well-known teacher with a willing learner actually choose to teach.
+    const teachReadiness = Math.min(safety, teachAffordability, helperCapacity);
+    const uTeach =
+      teachCooldownTicks > 0 || teachQuery.strength <= 0
+        ? 0
+        : clamp01(
+            driveConfig.teach *
+              teachReadiness *
+              (0.3 + 0.7 * clamp01(teachQuery.strength)) *
+              socialTargets.teachScore,
+          );
+
+    // Signals: emitted only when the situation is one a listener could ground
+    // for itself (otherwise the "signal" teaches nothing and is pure waste),
+    // and always scaled by how many agents are actually within earshot. The
+    // cooldown gate is what makes signalling an occasional act, not a loop.
+    const signalAudience = 0.2 + 0.8 * socialTargets.audienceScore;
+    const canSignal = signalCooldownTicks === 0 && energy >= cultureConfig.signals.minEnergyToEmit;
+    const foodHereCue = foodHere >= minFood ? 1 : 0;
+    const waterHereCue = waterHere >= minWater ? 1 : 0;
+    const dangerCue = clamp01(Math.max(socialTargets.avoidScore, alerted ? 0.8 : 0));
+    const helpCue = clamp01(
+      Math.max(
+        1 - clamp01(currentHealth / Math.max(1, helpConfig.healthNeedBelow)),
+        1 - clamp01(energy / Math.max(1, helpConfig.energyNeedBelow)),
+      ),
+    );
+    const followCue = hasFood || hasWater ? 1 : 0;
+    const uSignalDanger = canSignal ? clamp01(driveConfig.danger * dangerCue * signalAudience) : 0;
+    const uSignalFood = canSignal
+      ? clamp01(driveConfig.food * safety * (0.4 + 0.6 * uHunger) * foodHereCue * signalAudience * techniqueFactor)
+      : 0;
+    const uSignalWater = canSignal
+      ? clamp01(driveConfig.water * safety * (0.4 + 0.6 * uThirst) * waterHereCue * signalAudience)
+      : 0;
+    const uSignalFollow = canSignal
+      ? clamp01(driveConfig.follow * safety * (0.5 + 0.5 * helpCue) * followCue * signalAudience)
+      : 0;
 
     // Persist base scores for the debug view and determinism tests.
     const aiSlot = aiState.index[entity];
@@ -457,10 +620,15 @@ export function selectIntents(ctx: TickContext): void {
       aiState.columns.cooperate[aiSlot] = uCooperate;
       aiState.columns.avoid[aiSlot] = uAvoid;
       aiState.columns.confront[aiSlot] = uConfront;
+      aiState.columns.teach[aiSlot] = uTeach;
+      aiState.columns.signalDanger[aiSlot] = uSignalDanger;
+      aiState.columns.signalFood[aiSlot] = uSignalFood;
+      aiState.columns.signalWater[aiSlot] = uSignalWater;
+      aiState.columns.signalFollow[aiSlot] = uSignalFollow;
     }
 
     // --- Deterministic tie-break noise + action hysteresis ------------------
-    // Twelve jitter draws per agent, in ActionKind order, every tick —
+    // Seventeen jitter draws per agent, in ActionKind order, every tick —
     // unconditional so AI RNG consumption never depends on which branch wins.
     const nRest = (aiRng.nextFloat() * 2 - 1) * noise;
     const nWander = (aiRng.nextFloat() * 2 - 1) * noise;
@@ -474,6 +642,11 @@ export function selectIntents(ctx: TickContext): void {
     const nCooperate = (aiRng.nextFloat() * 2 - 1) * noise;
     const nAvoid = (aiRng.nextFloat() * 2 - 1) * noise;
     const nConfront = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nTeach = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nSignalDanger = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nSignalFood = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nSignalWater = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nSignalFollow = (aiRng.nextFloat() * 2 - 1) * noise;
 
     let winner: ActionKind = ActionKind.Rest;
     let best = uRest + nRest + (prevKind === AgentIntent.Rest ? hysteresis : 0);
@@ -532,6 +705,31 @@ export function selectIntents(ctx: TickContext): void {
       best = v;
       winner = ActionKind.Confront;
     }
+    v = uTeach + nTeach + (prevKind === AgentIntent.Teach ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.Teach;
+    }
+    v = uSignalDanger + nSignalDanger + (prevKind === AgentIntent.SignalDanger ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.SignalDanger;
+    }
+    v = uSignalFood + nSignalFood + (prevKind === AgentIntent.SignalFood ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.SignalFood;
+    }
+    v = uSignalWater + nSignalWater + (prevKind === AgentIntent.SignalWater ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.SignalWater;
+    }
+    v = uSignalFollow + nSignalFollow + (prevKind === AgentIntent.SignalFollow ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.SignalFollow;
+    }
 
     // --- Choose/keep the movement target (action hysteresis for targets) ----
     let targetX = x;
@@ -541,7 +739,12 @@ export function selectIntents(ctx: TickContext): void {
       case ActionKind.Rest:
       case ActionKind.Eat:
       case ActionKind.Drink:
-        // Stationary: target is where the agent already stands.
+      case ActionKind.SignalDanger:
+      case ActionKind.SignalFood:
+      case ActionKind.SignalWater:
+      case ActionKind.SignalFollow:
+        // Stationary: the agent emits in place (a signal has no target — the
+        // signal system finds whoever is close enough to hear it).
         break;
       case ActionKind.Wander: {
         const dx = prevTargetX - x;
@@ -641,6 +844,33 @@ export function selectIntents(ctx: TickContext): void {
         }
         break;
       }
+      case ActionKind.Teach: {
+        // Keep walking toward a chosen learner while it is alive and still
+        // lacks the item; otherwise take the best new candidate. Teaching
+        // itself happens in the culture system once the pair is within reach.
+        let pursueId = -1;
+        if (
+          prevKind === AgentIntent.Teach &&
+          prevTargetEntity >= 0 &&
+          ecs.entities.isAlive(prevTargetEntity) &&
+          !learnerHoldsItem(ecs, prevTargetEntity, teachQuery)
+        ) {
+          pursueId = prevTargetEntity;
+        } else if (socialTargets.teachId >= 0) {
+          pursueId = socialTargets.teachId;
+          targetX = socialTargets.teachX;
+          targetY = socialTargets.teachY;
+        }
+        if (pursueId >= 0) {
+          targetEntity = pursueId;
+          const pSlot = position.index[pursueId];
+          if (pSlot >= 0) {
+            targetX = position.columns.x[pSlot];
+            targetY = position.columns.y[pSlot];
+          }
+        }
+        break;
+      }
       case ActionKind.Confront: {
         // Chase the hostile rival (kept target only needs to stay alive).
         let pursueId = -1;
@@ -691,6 +921,16 @@ export function selectIntents(ctx: TickContext): void {
     intent.columns.targetY[i] = targetY;
     intent.columns.targetEntity[i] = targetEntity;
   }
+}
+
+/**
+ * Does `learner` already hold the item the agent could teach (as strongly)?
+ * Used only to decide whether to keep pursuing a Teach target; the culture
+ * system re-checks the full set of items before any transmission happens.
+ */
+function learnerHoldsItem(ecs: SimulationEcs, learner: EntityId, item: TeachQuery): boolean {
+  if (item.strength <= 0) return true;
+  return ecs.culturalMemory.strengthOf(learner, item.type, item.tileX, item.tileY, item.variantId) >= item.strength;
 }
 
 /**

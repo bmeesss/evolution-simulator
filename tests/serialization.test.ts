@@ -4,7 +4,10 @@ import { DEFAULT_SIMULATION_CONFIG } from '../src/simulation-core/simulation/con
 import {
   buildAgentDetails,
   buildSimulationSnapshot,
+  SNAPSHOT_FORMAT_VERSION,
 } from '../src/persistence/snapshots';
+import { INTENT_COUNT } from '../src/simulation-core/ai/intents';
+import { NO_SIGNAL_TOKEN, SIGNAL_TOKEN_COUNT } from '../src/simulation-core/culture';
 import {
   canonicalJson,
   deserializeSimulation,
@@ -51,7 +54,7 @@ describe('snapshots', () => {
     const sim = Simulation.create(1337, DEFAULT_SIMULATION_CONFIG);
     for (let i = 0; i < 33; i++) sim.step();
     const snapshot = buildSimulationSnapshot(sim);
-    expect(snapshot.formatVersion).toBe(4);
+    expect(snapshot.formatVersion).toBe(SNAPSHOT_FORMAT_VERSION);
     expect(snapshot.tick).toBe(33);
     expect(snapshot.population).toBe(50);
     expect(snapshot.deaths).toBe(0);
@@ -68,11 +71,20 @@ describe('snapshots', () => {
         expect(array[i]).toBeLessThanOrEqual(1);
       }
     }
-    // Intent kinds are valid AgentIntent values (0..6).
+    // Intent kinds are valid AgentIntent values (0 .. INTENT_COUNT-1).
     for (let i = 0; i < agents.intentKind.length; i++) {
       expect(agents.intentKind[i]).toBeGreaterThanOrEqual(0);
-      expect(agents.intentKind[i]).toBeLessThanOrEqual(11);
+      expect(agents.intentKind[i]).toBeLessThan(INTENT_COUNT);
     }
+    // Signal columns: either "never signalled" or a token inside the alphabet.
+    for (let i = 0; i < agents.signalToken.length; i++) {
+      const token = agents.signalToken[i];
+      expect(token === NO_SIGNAL_TOKEN || (token >= 0 && token < SIGNAL_TOKEN_COUNT)).toBe(true);
+      expect(agents.signalRecent[i] === 0 || agents.signalRecent[i] === 1).toBe(true);
+    }
+    // Culture statistics block is present and coherent.
+    expect(snapshot.culture.knowledgeItems).toBeGreaterThanOrEqual(0);
+    expect(snapshot.culture.signalsEmitted).toBeGreaterThanOrEqual(0);
     for (const value of [
       snapshot.averages.intelligence,
       snapshot.averages.strength,
@@ -128,9 +140,9 @@ describe('snapshots', () => {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
-    // AI debug table exposes exactly the twelve candidate actions (seven
-    // survival + five social), in scoring order.
-    expect(details!.aiUtilities).toHaveLength(12);
+    // AI debug table exposes exactly the candidate actions (seven survival +
+    // five Phase 4 social + five Phase 5 teaching/signalling), in scoring order.
+    expect(details!.aiUtilities).toHaveLength(INTENT_COUNT);
     expect(details!.aiUtilities.map((row) => row.action)).toEqual([
       'Rest',
       'Wander',
@@ -144,6 +156,11 @@ describe('snapshots', () => {
       'Cooperate',
       'Avoid',
       'Confront',
+      'Teach',
+      'SignalDanger',
+      'SignalFood',
+      'SignalWater',
+      'SignalFollow',
     ]);
     for (const row of details!.aiUtilities) {
       expect(row.utility).toBeGreaterThanOrEqual(0);
@@ -151,6 +168,14 @@ describe('snapshots', () => {
     }
     expect(Array.isArray(details!.memoryFood)).toBe(true);
     expect(Array.isArray(details!.memoryWater)).toBe(true);
+    // Phase 5 culture inspection: bounded arrays, labels are plain strings and
+    // a fresh agent holds nothing (culture is never inherited).
+    expect(details!.culturalKnowledge).toEqual([]);
+    expect(details!.signalAssociations).toEqual([]);
+    expect(details!.normStrengths).toHaveLength(3);
+    expect(details!.knowledgeItemCount).toBe(0);
+    expect(details!.signalAssociationCount).toBe(0);
+    expect(details!.lastSignal).toBe('none');
     expect(buildAgentDetails(sim, 999_999)).toBeNull();
   });
 });

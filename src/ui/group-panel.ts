@@ -7,6 +7,11 @@
  * inspection is fetched on demand from the worker via `get-group` — the full
  * social graph never crosses the boundary per frame. Selecting a group sends
  * a query; it never mutates simulation state.
+ *
+ * Phase 5 adds the cultural profile to the on-demand details: what the members
+ * actually know (dominant knowledge, traditions), which signal tokens the group
+ * has settled on and how similar its culture is to the other groups. Every
+ * value is derived from member knowledge — nothing is assigned to a group.
  */
 
 import { requireElement } from './dom';
@@ -19,6 +24,9 @@ const DECIMALS = 2;
 
 /** Formatting precision for territory coordinates (tiles). */
 const POSITION_DECIMALS = 1;
+
+/** How many other groups the inspector lists similarity for (bounded). */
+const MAX_GROUP_SIMILARITY_ROWS = 6;
 
 function describeGroupEvent(event: SimulationEvent): string {
   const tick = `t ${event.tick}`;
@@ -149,6 +157,9 @@ export class GroupPanel {
       if (group.parentId >= 0) {
         info.textContent += ` · split from #${group.parentId}`;
       }
+      if (group.cultureDominant !== 'none') {
+        info.textContent += ` · knows ${group.cultureDominant} (${Math.round(group.cultureDominantShare * 100)}%)`;
+      }
 
       const bar = document.createElement('div');
       bar.className = 'group-cohesion-bar';
@@ -218,6 +229,82 @@ export class GroupPanel {
         bonds.appendChild(li);
       }
       this.details.append(heading, bonds);
+    }
+
+    // --- Phase 5: cultural profile (derived from member knowledge) ---------
+    const cultureHeading = document.createElement('h4');
+    cultureHeading.textContent = 'Culture';
+    const cultureStats = document.createElement('dl');
+    cultureStats.className = 'stats';
+    const cultureRows: Array<[string, string]> = [
+      ['Knowledge holders', `${group.culture.carriers} / ${group.memberCount}`],
+      ['Distinct items', String(group.culture.distinctItems)],
+      ['Avg strength', group.culture.averageStrength.toFixed(DECIMALS)],
+      ['Diversity', group.culture.diversity.toFixed(DECIMALS)],
+      ['Norm holders', String(group.culture.normCarriers)],
+      ['Signal carriers', String(group.culture.signalCarriers)],
+    ];
+    for (const [label, value] of cultureRows) {
+      const row = document.createElement('div');
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      row.append(dt, dd);
+      cultureStats.appendChild(row);
+    }
+    this.details.append(cultureHeading, cultureStats);
+
+    if (group.culture.dominantKnowledge.length > 0) {
+      const sub = document.createElement('h5');
+      sub.textContent = 'Most widespread knowledge';
+      const list = document.createElement('ul');
+      list.className = 'memory-list';
+      for (const item of group.culture.dominantKnowledge) {
+        const li = document.createElement('li');
+        li.textContent = `${item.label} · ${item.carriers} holders (${Math.round(item.share * 100)}%) · ${(item.averageStrength * 100).toFixed(0)}%`;
+        list.appendChild(li);
+      }
+      this.details.append(sub, list);
+    }
+
+    if (group.culture.traditions.length > 0) {
+      const sub = document.createElement('h5');
+      sub.textContent = 'Traditions';
+      const list = document.createElement('ul');
+      list.className = 'memory-list';
+      for (const item of group.culture.traditions) {
+        const li = document.createElement('li');
+        li.textContent = `${item.label} · held by ${Math.round(item.share * 100)}% of members`;
+        list.appendChild(li);
+      }
+      this.details.append(sub, list);
+    }
+
+    if (group.culture.signals.length > 0) {
+      const sub = document.createElement('h5');
+      sub.textContent = 'Signal conventions';
+      const list = document.createElement('ul');
+      list.className = 'memory-list';
+      for (const convention of group.culture.signals) {
+        const li = document.createElement('li');
+        li.textContent = `${convention.label} · ${convention.carriers} agents (${Math.round(convention.share * 100)}%) · ${(convention.strength * 100).toFixed(0)}%`;
+        list.appendChild(li);
+      }
+      this.details.append(sub, list);
+    }
+
+    if (group.culturalSimilarity.length > 0) {
+      const sub = document.createElement('h5');
+      sub.textContent = 'Cultural similarity (0–1)';
+      const list = document.createElement('ul');
+      list.className = 'memory-list';
+      for (const entry of group.culturalSimilarity.slice(0, MAX_GROUP_SIMILARITY_ROWS)) {
+        const li = document.createElement('li');
+        li.textContent = `Group #${entry.groupId} · ${entry.similarity.toFixed(DECIMALS)}`;
+        list.appendChild(li);
+      }
+      this.details.append(sub, list);
     }
 
     if (group.recentEvents.length > 0) {

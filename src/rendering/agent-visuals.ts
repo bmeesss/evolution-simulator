@@ -31,6 +31,22 @@
 
 import { AgentIntent } from '../simulation-core/ai/intents';
 
+/**
+ * Signal indicators (Phase 5): a short-lived flash drawn next to an agent that
+ * just emitted a signal, coloured by the TOKEN it used (a deterministic hue
+ * from the token id — tokens have no inherent meaning, so the colour only
+ * identifies which token was used, never what it "means").
+ *
+ * The flash uses the same token→hue mapping for every agent, so watching the
+ * world shows whether a group has settled on a shared token or different
+ * groups keep different vocabularies.
+ */
+const SIGNAL_FLASH_MIN_RADIUS_TILES = 0.05;
+const SIGNAL_FLASH_RADIUS_RANGE_TILES = 0.07;
+
+/** No-signal sentinel (kept in sync with culture/signals.ts). */
+const NO_SIGNAL = 255;
+
 /** Radius in tile units at genome strength 0. */
 const BASE_RADIUS_TILES = 0.16;
 /** Additional radius in tile units at genome strength 1. */
@@ -118,6 +134,26 @@ export function moveMarkerColor(kind: number): string | null {
 /** Overlay color for the post-conflict flash, or null when not flashing. */
 export function conflictFlashColor(): string | null {
   return CONFLICT_FLASH_COLOR;
+}
+
+/**
+ * Colour identifying a signal TOKEN (hue spread over the 16 tokens by the
+ * golden angle). Deterministic and meaning-free — it says "this agent used
+ * Signal_07", nothing more.
+ */
+export function signalTokenColor(token: number): string {
+  const hue = (token * 137.508) % 360;
+  return `hsl(${hue.toFixed(1)}, 85%, 62%)`;
+}
+
+/** Radius (tile units) of the signal flash marker. */
+export function signalFlashRadiusTiles(): number {
+  return SIGNAL_FLASH_MIN_RADIUS_TILES + SIGNAL_FLASH_RADIUS_RANGE_TILES;
+}
+
+/** True when the snapshot says this agent emitted a signal recently. */
+export function isSignalling(token: number, recent: number): boolean {
+  return recent === 1 && token !== NO_SIGNAL;
 }
 
 /** Line color for the active cooperation bond. */

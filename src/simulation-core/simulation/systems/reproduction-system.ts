@@ -27,9 +27,11 @@
  */
 
 import type { TickContext } from '../tick-context';
+import { NO_FORAGE_TICK } from '../../ecs';
 import type { SimulationEcs } from '../../ecs';
 import type { EntityId } from '../../ecs';
 import { AgentIntent } from '../../ai';
+import { NO_SIGNAL_TOKEN } from '../../culture';
 import { crossoverGenomes, mutateGenome } from '../../genetics';
 import type { GenomeValues } from '../../genetics';
 import { lifeStageForAge, isReproductiveStage } from '../life-stages';
@@ -140,6 +142,18 @@ function createChild(ctx: TickContext, parentA: EntityId, parentB: EntityId): En
     cooperationTicks: 0,
     forageBonusTicks: 0,
     lastConflictTick: 0,
+  });
+  // Cultural memory starts EMPTY, exactly like personal memory: a child
+  // inherits genes from its parents but no knowledge, no norms and no signal
+  // meanings. Everything it will ever know culturally it must acquire through
+  // its own experience or through interaction.
+  ecs.culture.attach(entity, {
+    signalCooldownTicks: 0,
+    teachCooldownTicks: 0,
+    alertTicks: 0,
+    lastSignalToken: NO_SIGNAL_TOKEN,
+    lastSignalTick: 0,
+    lastForageTick: NO_FORAGE_TICK,
   });
 
   // Kin awareness: the child and both parents remember each other with warm

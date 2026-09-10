@@ -24,6 +24,8 @@ import { createWorld } from '../world';
 import type { World } from '../world';
 import { GroupRegistry, createSocialStats, restoreSocialStats, serializeSocialStats } from '../social';
 import type { GroupRegistry as GroupRegistryType, SocialStats, SerializedSocialStats } from '../social';
+import { createCultureStats, restoreCultureStats, serializeCultureStats } from '../culture';
+import type { CultureStats, SerializedCultureStats } from '../culture';
 import { selectIntents } from '../ai';
 import { ResourceIndex, AgentIndex } from '../ai/perception';
 import type { TickContext } from './tick-context';
@@ -41,6 +43,8 @@ import { updateDeaths } from './systems/death-system';
 import { updateAging } from './systems/aging-system';
 import { updateMortality } from './systems/mortality-system';
 import { updateReproduction } from './systems/reproduction-system';
+import { updateCulture } from './systems/culture-system';
+import { updateSignals } from './systems/signal-system';
 
 export interface SimulationRngStreams {
   /** Non-AI tick dynamics (reserved for future systems). */
@@ -51,6 +55,12 @@ export interface SimulationRngStreams {
   readonly ai: Rng;
   /** Reproduction: sex, crossover, mutation and birth randomness (Phase 3). */
   readonly repro: Rng;
+  /**
+   * Culture: transmission rolls, drift/variant offsets, signal invention and
+   * misperception (Phase 5). Serialized with the other streams so a restored
+   * simulation continues the exact same cultural history.
+   */
+  readonly culture: Rng;
 }
 
 interface SimulationParts {
@@ -72,6 +82,8 @@ export class Simulation {
   readonly groups: GroupRegistryType;
   /** Cumulative social counters (Phase 4). */
   readonly socialStats: SocialStats;
+  /** Cumulative cultural counters (Phase 5). */
+  readonly cultureStats: CultureStats;
 
   private tickCount: number;
   /** Cumulative deaths since creation (derived state, not serialized). */
@@ -85,10 +97,17 @@ export class Simulation {
     this.config = parts.config;
     this.world = parts.world;
     this.tickCount = parts.tickCount;
-    this.ecs = new SimulationEcs(parts.config.memory.capacity, parts.config.social.memory.capacity);
+    this.ecs = new SimulationEcs(
+      parts.config.memory.capacity,
+      parts.config.social.memory.capacity,
+      parts.config.culture.memory.capacity,
+      parts.config.culture.signals.maxAssociationsPerAgent,
+      parts.config.culture.signals.maxMeaningsPerToken,
+    );
     this.rng = parts.rng;
     this.groups = new GroupRegistry();
     this.socialStats = createSocialStats();
+    this.cultureStats = createCultureStats();
     this.events = new EventLog(() => ({
       tick: this.tickCount,
       timeHours: this.tickCount * this.config.time.hoursPerTick,
@@ -101,6 +120,7 @@ export class Simulation {
       rng: this.rng.sim,
       aiRng: this.rng.ai,
       reproRng: this.rng.repro,
+      cultureRng: this.rng.culture,
       resourceIndex: new ResourceIndex(
         this.world.width,
         this.world.height,
@@ -118,6 +138,7 @@ export class Simulation {
       ),
       groups: this.groups,
       socialStats: this.socialStats,
+      cultureStats: this.cultureStats,
       dtHours: this.config.time.hoursPerTick,
       tick: this.tickCount,
     };
@@ -135,6 +156,7 @@ export class Simulation {
         spawn: Rng.fromSeed(deriveStreamSeed(seed, 'spawn')),
         ai: Rng.fromSeed(deriveStreamSeed(seed, 'ai')),
         repro: Rng.fromSeed(deriveStreamSeed(seed, 'repro')),
+        culture: Rng.fromSeed(deriveStreamSeed(seed, 'culture')),
       },
     });
     spawnInitialAgents(simulation.ecs, simulation.world, simulation.config, simulation.rng.spawn, simulation.events);
@@ -151,10 +173,11 @@ export class Simulation {
     config: SimulationConfig;
     world: World;
     tickCount: number;
-    rngStates: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState };
+    rngStates: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState; culture: RngState };
     ecs: SerializedEcs;
     groups: ReturnType<GroupRegistryType['serialize']>;
     socialStats: SerializedSocialStats;
+    cultureStats: SerializedCultureStats;
   }): Simulation {
     const simulation = new Simulation({
       seed: parts.seed,
@@ -166,11 +189,13 @@ export class Simulation {
         spawn: Rng.fromState(parts.rngStates.spawn),
         ai: Rng.fromState(parts.rngStates.ai),
         repro: Rng.fromState(parts.rngStates.repro),
+        culture: Rng.fromState(parts.rngStates.culture),
       },
     });
     simulation.ecs.restore(parts.ecs);
     simulation.groups.restore(parts.groups);
     simulation.socialStatsRestore(parts.socialStats);
+    simulation.cultureStatsRestore(parts.cultureStats);
     return simulation;
   }
 
@@ -180,6 +205,19 @@ export class Simulation {
     this.socialStats.conflictEvents = restored.conflictEvents;
     this.socialStats.helpEvents = restored.helpEvents;
     this.socialStats.socialInteractionEvents = restored.socialInteractionEvents;
+  }
+
+  private cultureStatsRestore(saved: SerializedCultureStats): void {
+    const restored = restoreCultureStats(saved);
+    this.cultureStats.discoveries = restored.discoveries;
+    this.cultureStats.taught = restored.taught;
+    this.cultureStats.learned = restored.learned;
+    this.cultureStats.lost = restored.lost;
+    this.cultureStats.variants = restored.variants;
+    this.cultureStats.normsLearned = restored.normsLearned;
+    this.cultureStats.signalsEmitted = restored.signalsEmitted;
+    this.cultureStats.signalsHeard = restored.signalsHeard;
+    this.cultureStats.signalLearnings = restored.signalLearnings;
   }
 
   /** Current tick number (ticks since simulation creation). */
@@ -222,11 +260,15 @@ export class Simulation {
    *   7.  updateSocialState     — loneliness, familiarity decay, relationship
    *                               pruning (after deaths; sees fresh stores)
    *   8.  updateMemory          — forget unused memories (decay + prune)
-   *   9.  regenerateResources   — food/water regrow toward their caps
-   *   10. updateAging           — advance age
-   *   11. updateMortality       — age-related health drain for elderly
-   *   12. updateReproduction    — birth children from SeekPartner pairings
-   *   13. updateGroups          — periodic emergent community detection
+   *   9.  updateCulture         — knowledge decay/reinforcement, discovery,
+   *                               deliberate teaching and imitation (Phase 5)
+   *   10. updateSignals         — association decay, signal emission, proximity
+   *                               listening and association learning (Phase 5)
+   *   11. regenerateResources   — food/water regrow toward their caps
+   *   12. updateAging           — advance age
+   *   13. updateMortality       — age-related health drain for elderly
+   *   14. updateReproduction    — birth children from SeekPartner pairings
+   *   15. updateGroups          — periodic emergent community detection
    *                               (runs only every detectionIntervalTicks)
    *
    * Reproduction runs late so children are created at age 0 (not aged this
@@ -234,6 +276,12 @@ export class Simulation {
    * breed. Group detection runs last so it sees this tick's final social state
    * (including newborn kin seeds) and its heavy clustering work happens at
    * most once per detection interval.
+   *
+   * The cultural systems run after deaths and social maintenance so they only
+   * ever see living agents and this tick's settled social state, and before
+   * reproduction so a newborn's first cultural tick is the next one (it is
+   * born with an empty cultural memory and no signal meanings — see
+   * reproduction-system.ts).
    */
   step(): void {
     this.ctx.tick = this.tickCount;
@@ -245,21 +293,24 @@ export class Simulation {
     this.deaths += updateDeaths(this.ctx); // 6. death (health <= 0)
     updateSocialState(this.ctx); // 7. social slow dynamics (Phase 4)
     updateMemory(this.ctx); // 8. forgetting
-    regenerateResources(this.ctx); // 9. regrowth
-    updateAging(this.ctx); // 10. age
-    updateMortality(this.ctx); // 11. age-related mortality pressure
-    this.births += updateReproduction(this.ctx); // 12. births & lineage
-    updateGroups(this.ctx); // 13. emergent groups (periodic, Phase 4)
+    updateCulture(this.ctx); // 9. cultural knowledge & transmission (Phase 5)
+    updateSignals(this.ctx); // 10. proto-communication (Phase 5)
+    regenerateResources(this.ctx); // 11. regrowth
+    updateAging(this.ctx); // 12. age
+    updateMortality(this.ctx); // 13. age-related mortality pressure
+    this.births += updateReproduction(this.ctx); // 14. births & lineage
+    updateGroups(this.ctx); // 15. emergent groups (periodic, Phase 4)
     this.tickCount++;
   }
 
   /** Serializable RNG states (part of the save state). */
-  getRngStates(): { sim: RngState; spawn: RngState; ai: RngState; repro: RngState } {
+  getRngStates(): { sim: RngState; spawn: RngState; ai: RngState; repro: RngState; culture: RngState } {
     return {
       sim: this.rng.sim.getState(),
       spawn: this.rng.spawn.getState(),
       ai: this.rng.ai.getState(),
       repro: this.rng.repro.getState(),
+      culture: this.rng.culture.getState(),
     };
   }
 
@@ -271,5 +322,10 @@ export class Simulation {
   /** Serializable social statistics (part of the save state). */
   getSerializedSocialStats(): SerializedSocialStats {
     return serializeSocialStats(this.socialStats);
+  }
+
+  /** Serializable cultural statistics (part of the save state). */
+  getSerializedCultureStats(): SerializedCultureStats {
+    return serializeCultureStats(this.cultureStats);
   }
 }

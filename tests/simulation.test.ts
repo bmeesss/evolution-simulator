@@ -293,6 +293,7 @@ describe('simulation determinism (the core guarantee)', () => {
       ecs: save.ecs,
       groups: save.groups,
       socialStats: save.socialStats,
+      cultureStats: save.cultureStats,
     });
     for (let i = 0; i < TICKS - Math.floor(TICKS / 2); i++) continued.step();
 

@@ -33,6 +33,21 @@ export class StatsPanel {
     requireElement('stat-avg-social-tendency').textContent = snapshot.averages.socialTendency.toFixed(AVERAGE_DECIMALS);
     requireElement('stat-food').textContent = snapshot.resources.food.toFixed(RESOURCE_DECIMALS);
     requireElement('stat-water').textContent = snapshot.resources.water.toFixed(RESOURCE_DECIMALS);
+
+    // Phase 5 — culture & proto-communication.
+    const culture = snapshot.culture;
+    requireElement('stat-culture-items').textContent = String(culture.knowledgeItems);
+    requireElement('stat-culture-holders').textContent = String(culture.knowledgeHolders);
+    requireElement('stat-culture-density').textContent = culture.averageKnowledgePerHolder.toFixed(2);
+    requireElement('stat-culture-discoveries').textContent = String(culture.discoveries);
+    requireElement('stat-culture-taught').textContent = String(culture.taught);
+    requireElement('stat-culture-learned').textContent = String(culture.learned);
+    requireElement('stat-culture-lost').textContent = String(culture.lost);
+    requireElement('stat-culture-variants').textContent = String(culture.variants);
+    requireElement('stat-culture-norms').textContent = String(culture.normCarriers);
+    requireElement('stat-culture-signals-emitted').textContent = String(culture.signalsEmitted);
+    requireElement('stat-culture-signals-heard').textContent = String(culture.signalsHeard);
+    requireElement('stat-culture-signal-learnings').textContent = String(culture.signalLearnings);
   }
 
   clear(): void {
@@ -53,5 +68,17 @@ export class StatsPanel {
     requireElement('stat-avg-social-tendency').textContent = '—';
     requireElement('stat-food').textContent = '—';
     requireElement('stat-water').textContent = '—';
+    requireElement('stat-culture-items').textContent = '—';
+    requireElement('stat-culture-holders').textContent = '—';
+    requireElement('stat-culture-density').textContent = '—';
+    requireElement('stat-culture-discoveries').textContent = '—';
+    requireElement('stat-culture-taught').textContent = '—';
+    requireElement('stat-culture-learned').textContent = '—';
+    requireElement('stat-culture-lost').textContent = '—';
+    requireElement('stat-culture-variants').textContent = '—';
+    requireElement('stat-culture-norms').textContent = '—';
+    requireElement('stat-culture-signals-emitted').textContent = '—';
+    requireElement('stat-culture-signals-heard').textContent = '—';
+    requireElement('stat-culture-signal-learnings').textContent = '—';
   }
 }

@@ -78,6 +78,7 @@ export function interactWithResources(ctx: TickContext): void {
           entityId: entity,
           detail: `${take.toFixed(3)} @ ${tileX},${tileY}`,
         });
+        stampForage(ctx, entity, tick);
         if (created) ctx.events.record('agent_learned', { entityId: entity, detail: `food @ ${tileX},${tileY}` });
         if (world.food[idx] < resources.minFoodToEat) {
           ctx.events.record('resource_depleted', { detail: `food @ ${tileX},${tileY}` });
@@ -129,6 +130,7 @@ export function interactWithResources(ctx: TickContext): void {
           entityId: entity,
           detail: `${take.toFixed(3)} @ ${tileX},${tileY}`,
         });
+        stampForage(ctx, entity, tick);
         if (created) ctx.events.record('agent_learned', { entityId: entity, detail: `water @ ${tileX},${tileY}` });
         if (world.water[idx] < resources.minWaterToDrink) {
           ctx.events.record('resource_depleted', { detail: `water @ ${tileX},${tileY}` });
@@ -138,6 +140,17 @@ export function interactWithResources(ctx: TickContext): void {
       }
     }
   }
+}
+
+/**
+ * Stamp a genuinely successful Eat/Drink on the culture component (Phase 5).
+ * The culture system reads this to credit a discovery and to reinforce the
+ * cultural knowledge that just paid off. Pure observation hook: nothing about
+ * behaviour changes here, and the stamp is one integer write per meal.
+ */
+function stampForage(ctx: TickContext, entity: EntityId, tick: number): void {
+  const slot = ctx.ecs.culture.index[entity];
+  if (slot >= 0) ctx.ecs.culture.columns.lastForageTick[slot] = tick;
 }
 
 /** Successful interaction: reinforce (or create) the memory of a location. */

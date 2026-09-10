@@ -47,6 +47,12 @@ export function updateDeaths(ctx: TickContext): number {
     }
     ecs.relationships.removeAll(entity);
     ecs.memory.removeAll(entity);
+    // Cultural cleanup: knowledge and signal associations belong to the
+    // individual, so they die with it. Knowledge that was never taught onward
+    // is simply gone — that is cultural extinction, and it is how traditions
+    // disappear.
+    ecs.culturalMemory.removeAll(entity);
+    ecs.signals.removeAll(entity);
     ecs.position.detach(entity);
     ecs.needs.detach(entity);
     ecs.age.detach(entity);
@@ -57,6 +63,7 @@ export function updateDeaths(ctx: TickContext): number {
     ecs.lineage.detach(entity);
     ecs.reproductive.detach(entity);
     ecs.social.detach(entity);
+    ecs.culture.detach(entity);
     ecs.entities.destroy(entity);
   }
   return dead.length;
