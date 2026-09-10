@@ -51,7 +51,7 @@ describe('snapshots', () => {
     const sim = Simulation.create(1337, DEFAULT_SIMULATION_CONFIG);
     for (let i = 0; i < 33; i++) sim.step();
     const snapshot = buildSimulationSnapshot(sim);
-    expect(snapshot.formatVersion).toBe(3);
+    expect(snapshot.formatVersion).toBe(4);
     expect(snapshot.tick).toBe(33);
     expect(snapshot.population).toBe(50);
     expect(snapshot.deaths).toBe(0);
@@ -71,7 +71,7 @@ describe('snapshots', () => {
     // Intent kinds are valid AgentIntent values (0..6).
     for (let i = 0; i < agents.intentKind.length; i++) {
       expect(agents.intentKind[i]).toBeGreaterThanOrEqual(0);
-      expect(agents.intentKind[i]).toBeLessThanOrEqual(6);
+      expect(agents.intentKind[i]).toBeLessThanOrEqual(11);
     }
     for (const value of [
       snapshot.averages.intelligence,
@@ -128,8 +128,9 @@ describe('snapshots', () => {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
-    // AI debug table exposes exactly the seven candidate actions.
-    expect(details!.aiUtilities).toHaveLength(7);
+    // AI debug table exposes exactly the twelve candidate actions (seven
+    // survival + five social), in scoring order.
+    expect(details!.aiUtilities).toHaveLength(12);
     expect(details!.aiUtilities.map((row) => row.action)).toEqual([
       'Rest',
       'Wander',
@@ -138,6 +139,11 @@ describe('snapshots', () => {
       'Eat',
       'Drink',
       'SeekPartner',
+      'Socialize',
+      'Help',
+      'Cooperate',
+      'Avoid',
+      'Confront',
     ]);
     for (const row of details!.aiUtilities) {
       expect(row.utility).toBeGreaterThanOrEqual(0);

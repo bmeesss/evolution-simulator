@@ -10,14 +10,15 @@
  * The generic ComponentStore already supports them without changes; they will
  * simply be added as new schemas + stores when their gameplay phases arrive:
  *
- * - Social: relationship references between entities. Sparse per-entity pairs;
- *   likely a per-agent open-addressed table or a separate edge store.
  * - Inventory: carried resources. Fixed columns (e.g. per-resource counts) fit
  *   ComponentStore directly.
  *
  * Memory is implemented in phase 2 as a dedicated store (see
  * `ai/memory/memory-store.ts`) because its per-agent length is variable (but
- * bounded) — exactly the arena/offset scheme previously sketched here.
+ * bounded) — exactly the arena/offset scheme previously sketched here. The
+ * Phase 4 social relationship memory follows the same dedicated-store pattern
+ * (see `social/relationship-store.ts`); the fixed-column social state is the
+ * `social` ComponentStore below.
  */
 
 /** Position in tile units. Valid range: [0, worldWidth-1] x [0, worldHeight-1]. */
@@ -77,6 +78,36 @@ export const AiStateSchema = {
   eat: Float32Array,
   drink: Float32Array,
   seekPartner: Float32Array,
+  // Phase 4 — social actions (same order as ActionKind).
+  socialize: Float32Array,
+  help: Float32Array,
+  cooperate: Float32Array,
+  avoid: Float32Array,
+  confront: Float32Array,
+};
+
+/**
+ * Social state (Phase 4) — fixed numeric per-agent columns for the social
+ * layer. The sparse per-agent relationship memory lives in a dedicated store
+ * (social/relationship-store.ts) because it is variable-length but bounded,
+ * exactly like the environmental memory.
+ *
+ *   loneliness          0..100, rises over time, relieved by socializing
+ *   groupId             current emergent-group membership (-1 = ungrouped)
+ *   groupJoinTick       tick the agent joined its current group
+ *   cooperationTarget   partner of the running cooperation session (-1 = none)
+ *   cooperationTicks    progress of the running cooperation session
+ *   forageBonusTicks    remaining cooperative-foraging efficiency bonus
+ *   lastConflictTick    last tick this agent was in a conflict (flash UI)
+ */
+export const SocialSchema = {
+  loneliness: Float32Array,
+  groupId: Int32Array,
+  groupJoinTick: Uint32Array,
+  cooperationTarget: Int32Array,
+  cooperationTicks: Uint16Array,
+  forageBonusTicks: Uint16Array,
+  lastConflictTick: Uint32Array,
 };
 
 /**

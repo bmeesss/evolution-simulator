@@ -16,7 +16,7 @@ describe('evolution statistics (snapshot)', () => {
     const sim = Simulation.create(TEST_SEED, config);
     for (let i = 0; i < 1500; i++) sim.step();
     const snap = buildSimulationSnapshot(sim);
-    expect(snap.formatVersion).toBe(3);
+    expect(snap.formatVersion).toBe(4);
     expect(snap.births).toBe(sim.birthCount);
     expect(snap.reproductionSuccesses).toBe(sim.birthCount);
     expect(snap.deaths).toBe(sim.deathCount);

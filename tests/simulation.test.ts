@@ -33,9 +33,15 @@ interface ComparableState {
   ages: Array<[number, number]>;
   healths: Array<[number, number]>;
   intents: Array<[number, number, number, number, number]>; // + targetEntity
-  aiStates: Array<[number, number, number, number, number, number, number, number]>; // + seekPartner
+  // 12 action utilities (survival + social) per agent.
+  aiStates: Array<[number, number, number, number, number, number, number, number, number, number, number, number, number]>;
   lineages: Array<[number, number, number, number]>; // generation, parentA, parentB
   reproductives: Array<[number, number, number, number]>; // sex, cooldown, eligible
+  // Phase 4: social state must be part of the determinism contract too.
+  socials: Array<[number, number, number, number, number, number, number, number]>;
+  relationships: unknown; // full serialized relationship store
+  groups: unknown; // full serialized group registry
+  socialStats: unknown; // serialized social statistics counters
   memory: unknown;
   rngSim: RngState;
   rngSpawn: RngState;
@@ -93,7 +99,7 @@ function captureComparableState(sim: Simulation): ComparableState {
       ecs.intent.columns.targetEntity[i],
     ]);
   }
-  const aiStates: Array<[number, number, number, number, number, number, number, number]> = [];
+  const aiStates: Array<[number, number, number, number, number, number, number, number, number, number, number, number, number]> = [];
   for (let i = 0; i < ecs.aiState.count; i++) {
     const a = ecs.aiState.columns;
     aiStates.push([
@@ -105,6 +111,25 @@ function captureComparableState(sim: Simulation): ComparableState {
       a.eat[i],
       a.drink[i],
       a.seekPartner[i],
+      a.socialize[i],
+      a.help[i],
+      a.cooperate[i],
+      a.avoid[i],
+      a.confront[i],
+    ]);
+  }
+  const socials: Array<[number, number, number, number, number, number, number, number]> = [];
+  for (let i = 0; i < ecs.social.count; i++) {
+    const s = ecs.social.columns;
+    socials.push([
+      ecs.social.entityOf[i],
+      s.loneliness[i],
+      s.groupId[i],
+      s.groupJoinTick[i],
+      s.cooperationTarget[i],
+      s.cooperationTicks[i],
+      s.forageBonusTicks[i],
+      s.lastConflictTick[i],
     ]);
   }
   const lineages: Array<[number, number, number, number]> = [];
@@ -132,6 +157,7 @@ function captureComparableState(sim: Simulation): ComparableState {
   healths.sort(byEntityId);
   intents.sort(byEntityId);
   aiStates.sort(byEntityId);
+  socials.sort(byEntityId);
   lineages.sort(byEntityId);
   reproductives.sort(byEntityId);
 
@@ -147,8 +173,17 @@ function captureComparableState(sim: Simulation): ComparableState {
     healths,
     intents,
     aiStates,
+    socials,
     lineages,
     reproductives,
+    relationships: ecs.relationships.serialize(),
+    groups: sim.groups.serialize(),
+    socialStats: {
+      cooperationEvents: sim.socialStats.cooperationEvents,
+      conflictEvents: sim.socialStats.conflictEvents,
+      helpEvents: sim.socialStats.helpEvents,
+      socialInteractionEvents: sim.socialStats.socialInteractionEvents,
+    },
     memory: ecs.memory.serialize(),
     rngSim: sim.rng.sim.getState(),
     rngSpawn: sim.rng.spawn.getState(),
@@ -213,7 +248,11 @@ describe('simulation determinism (the core guarantee)', () => {
     expect(stateA.ages).toEqual(stateB.ages); // ages
     expect(stateA.healths).toEqual(stateB.healths); // health
     expect(stateA.intents).toEqual(stateB.intents); // movement targets + partner
-    expect(stateA.aiStates).toEqual(stateB.aiStates); // AI utility scores
+    expect(stateA.aiStates).toEqual(stateB.aiStates); // AI utility scores (12 actions)
+    expect(stateA.socials).toEqual(stateB.socials); // social columns
+    expect(stateA.relationships).toEqual(stateB.relationships); // relationship store
+    expect(stateA.groups).toEqual(stateB.groups); // group registry
+    expect(stateA.socialStats).toEqual(stateB.socialStats); // social statistics
     expect(stateA.lineages).toEqual(stateB.lineages); // generation + parents
     expect(stateA.reproductives).toEqual(stateB.reproductives); // sex + cooldown + eligibility
     expect(stateA.memory).toEqual(stateB.memory); // memory state
@@ -252,6 +291,8 @@ describe('simulation determinism (the core guarantee)', () => {
       tickCount: save.tick,
       rngStates: save.rng,
       ecs: save.ecs,
+      groups: save.groups,
+      socialStats: save.socialStats,
     });
     for (let i = 0; i < TICKS - Math.floor(TICKS / 2); i++) continued.step();
 

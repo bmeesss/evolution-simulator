@@ -74,6 +74,26 @@
             <div id="trait-distributions" class="trait-distributions"></div>
           </section>
 
+          <section class="panel" aria-label="Groups">
+            <h2>Groups</h2>
+            <dl class="stats">
+              <div><dt>Groups</dt><dd id="group-count">—</dd></div>
+              <div><dt>Grouped agents</dt><dd id="group-grouped">—</dd></div>
+              <div><dt>Isolated agents</dt><dd id="group-isolated">—</dd></div>
+              <div><dt>Largest group</dt><dd id="group-largest">—</dd></div>
+              <div><dt>Smallest stable</dt><dd id="group-smallest-stable">—</dd></div>
+              <div><dt>Avg group size</dt><dd id="group-avg-size">—</dd></div>
+              <div><dt>Avg cohesion</dt><dd id="group-avg-cohesion">—</dd></div>
+              <div><dt>Relationships</dt><dd id="group-relationships">—</dd></div>
+              <div><dt>Avg relationship</dt><dd id="group-avg-relationship">—</dd></div>
+              <div><dt>Avg trust</dt><dd id="group-avg-trust">—</dd></div>
+              <div><dt>Cooperations</dt><dd id="group-cooperations">—</dd></div>
+              <div><dt>Conflicts</dt><dd id="group-conflicts">—</dd></div>
+            </dl>
+            <ul id="group-list" class="group-list"></ul>
+            <div id="group-details" class="group-details hidden"></div>
+          </section>
+
           <section class="panel" aria-label="Selected agent">
             <h2 id="agent-panel-title">No agent selected</h2>
             <p id="agent-panel-missing" class="muted">Click an agent to inspect it.</p>
@@ -106,6 +126,17 @@
               <table id="agent-ai-table" class="ai-table">
                 <tbody></tbody>
               </table>
+            </div>
+            <div id="agent-social-block" class="agent-social-block hidden">
+              <h3>Social</h3>
+              <dl class="stats">
+                <div><dt>Group</dt><dd id="agent-group">—</dd></div>
+                <div><dt>Loneliness</dt><dd id="agent-loneliness">—</dd></div>
+                <div><dt>Cooperation</dt><dd id="agent-cooperation">—</dd></div>
+                <div><dt>Forage bonus</dt><dd id="agent-forage-bonus">—</dd></div>
+              </dl>
+              <h3>Relationships</h3>
+              <ul id="agent-relationships" class="memory-list"></ul>
             </div>
             <div id="agent-memory-block" class="agent-memory-block hidden">
               <h3>Remembered food</h3>

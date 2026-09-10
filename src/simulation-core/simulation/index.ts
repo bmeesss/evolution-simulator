@@ -20,6 +20,7 @@ export type {
   MortalityConfig,
   MetabolismConfig,
   MutationConfig,
+  SocialConfig,
 } from './config';
 export type { TickContext } from './tick-context';
 export { formatTimeHours, HOURS_PER_DAY } from './time';
@@ -27,6 +28,10 @@ export { spawnInitialAgents } from './systems/spawn';
 export { moveAgents } from './systems/movement-system';
 export { updateNeeds } from './systems/needs-system';
 export { interactWithResources } from './systems/resource-system';
+export { updateSocialInteractions } from './systems/social-system';
+export { updateSocialState } from './systems/social-maintenance';
+export { updateGroups, groupJoinUtility, groupLeaveUtility } from './systems/group-system';
+export type { GroupJoinFactors, GroupLeaveFactors } from './systems/group-system';
 export { updateMemory } from './systems/memory-system';
 export { regenerateResources } from './systems/regeneration-system';
 export { updateDeaths } from './systems/death-system';

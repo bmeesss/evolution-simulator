@@ -51,6 +51,10 @@ export class SimulationWorkerClient {
     this.send({ type: 'get-agent', entityId, requestId });
   }
 
+  getGroup(groupId: number, requestId?: number): void {
+    this.send({ type: 'get-group', groupId, requestId });
+  }
+
   requestSave(requestId?: number): void {
     this.send({ type: 'request-save', requestId });
   }

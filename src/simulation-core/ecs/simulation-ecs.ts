@@ -20,15 +20,21 @@ import {
   NeedsSchema,
   PositionSchema,
   ReproductiveSchema,
+  SocialSchema,
 } from './components';
 import { MemoryStore } from '../ai/memory';
 import type { SerializedMemoryStore } from '../ai/memory';
+import { RelationshipStore } from '../social/relationship-store';
+import type { SerializedRelationshipStore } from '../social/relationship-store';
 
 /** Initial capacity for agent stores (grows by doubling when exceeded). */
 export const INITIAL_AGENT_CAPACITY = 128;
 
 /** Default per-agent memory capacity (used before config is available). */
 export const DEFAULT_MEMORY_CAPACITY = 8;
+
+/** Default per-agent relationship capacity (used before config is available). */
+export const DEFAULT_RELATIONSHIP_CAPACITY = 16;
 
 export interface SerializedEcs {
   entities: {
@@ -58,12 +64,20 @@ export class SimulationEcs {
   readonly aiState = new ComponentStore('aiState', AiStateSchema, INITIAL_AGENT_CAPACITY);
   readonly lineage = new ComponentStore('lineage', LineageSchema, INITIAL_AGENT_CAPACITY);
   readonly reproductive = new ComponentStore('reproductive', ReproductiveSchema, INITIAL_AGENT_CAPACITY);
+  readonly social = new ComponentStore('social', SocialSchema, INITIAL_AGENT_CAPACITY);
 
   /** Variable-length-but-bounded per-agent memory (dedicated store, not SoA). */
   readonly memory: MemoryStore;
 
-  constructor(memoryCapacity: number = DEFAULT_MEMORY_CAPACITY) {
+  /** Sparse bounded per-agent social relationships (Phase 4, dedicated store). */
+  readonly relationships: RelationshipStore;
+
+  constructor(
+    memoryCapacity: number = DEFAULT_MEMORY_CAPACITY,
+    relationshipCapacity: number = DEFAULT_RELATIONSHIP_CAPACITY,
+  ) {
     this.memory = new MemoryStore(memoryCapacity);
+    this.relationships = new RelationshipStore(relationshipCapacity);
   }
 
   /**
@@ -80,6 +94,7 @@ export class SimulationEcs {
     this.aiState,
     this.lineage,
     this.reproductive,
+    this.social,
   ];
 
   serialize(): SerializedEcs {
@@ -88,6 +103,7 @@ export class SimulationEcs {
       savedStores[store.name] = store.serialize();
     }
     savedStores[this.memory.name] = this.memory.serialize();
+    savedStores[this.relationships.name] = this.relationships.serialize();
     return { entities: this.entities.serialize(), stores: savedStores };
   }
 
@@ -105,6 +121,11 @@ export class SimulationEcs {
       throw new Error(`SimulationEcs.restore: missing store '${this.memory.name}'`);
     }
     this.memory.restore(savedMemory as SerializedMemoryStore);
+    const savedRelationships = saved.stores[this.relationships.name];
+    if (!savedRelationships) {
+      throw new Error(`SimulationEcs.restore: missing store '${this.relationships.name}'`);
+    }
+    this.relationships.restore(savedRelationships as SerializedRelationshipStore);
 
     // Sanity check: every component store must reference only alive entities.
     for (const store of this.componentStores) {
@@ -121,6 +142,13 @@ export class SimulationEcs {
     for (const entity of memorySave.entities) {
       if (!this.entities.isAlive(entity)) {
         throw new Error(`SimulationEcs.restore: memory store references dead entity ${entity}`);
+      }
+    }
+    // Sanity check: relationships may only belong to alive entities.
+    const relationshipSave = savedRelationships as SerializedRelationshipStore;
+    for (const entity of relationshipSave.entities) {
+      if (!this.entities.isAlive(entity)) {
+        throw new Error(`SimulationEcs.restore: relationship store references dead entity ${entity}`);
       }
     }
   }

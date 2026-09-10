@@ -30,13 +30,31 @@ export type SimulationEventType =
   | 'reproduction_success'
   | 'birth'
   | 'mutation'
-  | 'old_age_death';
+  | 'old_age_death'
+  // Phase 4 — social evolution. Relationship-change events fire on threshold
+  // crossings (not every tick); resentment fires when blame first pushes a
+  // relationship into genuine hostility; group events fire only on the
+  // periodic detection runs.
+  | 'social_interaction'
+  | 'relationship_changed'
+  | 'resentment'
+  | 'helped_agent'
+  | 'cooperation_started'
+  | 'cooperation_completed'
+  | 'conflict'
+  | 'group_created'
+  | 'group_joined'
+  | 'group_left'
+  | 'group_split'
+  | 'group_merged';
 
 export interface SimulationEvent {
   readonly type: SimulationEventType;
   readonly tick: number;
   readonly timeHours: number;
   readonly entityId?: EntityId;
+  /** Group the event refers to, when applicable (Phase 4 group events). */
+  readonly groupId?: number;
   /** Short human-readable detail for the UI feed (structured payloads come later). */
   readonly detail?: string;
 }
@@ -63,7 +81,10 @@ export class EventLog {
   }
 
   /** Record an event, stamped with the current simulation tick/time. */
-  record(type: SimulationEventType, extras: { entityId?: EntityId; detail?: string } = {}): void {
+  record(
+    type: SimulationEventType,
+    extras: { entityId?: EntityId; groupId?: number; detail?: string } = {},
+  ): void {
     const time = this.getTime();
     this.entries.push({ type, tick: time.tick, timeHours: time.timeHours, ...extras });
     if (this.entries.length > this.capacity) {

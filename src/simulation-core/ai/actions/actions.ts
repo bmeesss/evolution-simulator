@@ -28,4 +28,9 @@ export const ACTION_NAMES: readonly string[] = [
   'Eat',
   'Drink',
   'SeekPartner',
+  'Socialize',
+  'Help',
+  'Cooperate',
+  'Avoid',
+  'Confront',
 ];

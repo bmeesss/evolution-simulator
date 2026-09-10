@@ -38,6 +38,14 @@ export function updateDeaths(ctx: TickContext): number {
     ctx.events.record('agent_died', { entityId: entity, detail: 'health depleted' });
     if (isElderly) ctx.events.record('old_age_death', { entityId: entity });
 
+    // Social cleanup: forget this agent's relationships, leave its group's
+    // member list (membership itself dies with the social component).
+    const socialSlot = ecs.social.index[entity];
+    if (socialSlot >= 0) {
+      const groupId = ecs.social.columns.groupId[socialSlot];
+      if (groupId >= 0) ctx.groups.removeMember(entity, groupId);
+    }
+    ecs.relationships.removeAll(entity);
     ecs.memory.removeAll(entity);
     ecs.position.detach(entity);
     ecs.needs.detach(entity);
@@ -48,6 +56,7 @@ export function updateDeaths(ctx: TickContext): number {
     ecs.aiState.detach(entity);
     ecs.lineage.detach(entity);
     ecs.reproductive.detach(entity);
+    ecs.social.detach(entity);
     ecs.entities.destroy(entity);
   }
   return dead.length;

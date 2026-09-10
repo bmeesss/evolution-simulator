@@ -17,6 +17,7 @@ import { AgentPanel } from '../ui/agent-panel';
 import { ControlsPanel } from '../ui/controls-panel';
 import { DebugOverlay } from '../ui/debug-overlay';
 import { EventLogPanel } from '../ui/event-log-panel';
+import { GroupPanel } from '../ui/group-panel';
 import { StatsPanel } from '../ui/stats-panel';
 import { HistoryGraph } from '../ui/history-graph';
 import { TraitDistributionsPanel } from '../ui/trait-distributions';
@@ -69,6 +70,10 @@ export class EvolutionApp {
   private readonly historyGraph = new HistoryGraph();
   private readonly traitDistributions = new TraitDistributionsPanel();
   private readonly agentPanel = new AgentPanel();
+  private readonly groupPanel = new GroupPanel((groupId) => {
+    this.groupPanel.selectGroup(groupId);
+    this.worker.getGroup(groupId);
+  });
   private readonly eventLog = new EventLogPanel();
   private readonly debugOverlay = new DebugOverlay();
 
@@ -150,6 +155,11 @@ export class EvolutionApp {
           }
         }
         break;
+      case 'group-details':
+        if (!message.requestId) {
+          this.groupPanel.showDetails(message.group);
+        }
+        break;
       case 'determinism-result':
         if (!message.requestId) {
           console.info('[evosim] determinism self-check:', message.result);
@@ -181,6 +191,7 @@ export class EvolutionApp {
     this.historyGraph.clear();
     this.traitDistributions.clear();
     this.agentPanel.clear();
+    this.groupPanel.clear();
     this.eventLog.clear();
   }
 
@@ -190,6 +201,7 @@ export class EvolutionApp {
     this.stats.update(snapshot);
     this.historyGraph.push(snapshot);
     this.traitDistributions.update(snapshot);
+    this.groupPanel.update(snapshot);
     // Keep the selected-agent panel live (guarded against stale replies).
     const selected = this.selection.entityId;
     if (selected !== null) {

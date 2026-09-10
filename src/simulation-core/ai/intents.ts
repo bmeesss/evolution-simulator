@@ -35,26 +35,58 @@ export const AgentIntent = {
   Drink: 5,
   /** Seek a nearby reproductively-eligible partner (targetEntity = partner). */
   SeekPartner: 6,
+  /** Spend time with a nearby agent to build a bond (Phase 4 social). */
+  Socialize: 7,
+  /** Move to and support a nearby agent in need (costly, Phase 4 social). */
+  Help: 8,
+  /** Forage together with a bonded partner for a session (Phase 4 social). */
+  Cooperate: 9,
+  /** Flee from a nearby feared/hostile agent (targetEntity = threat). */
+  Avoid: 10,
+  /** Contest resources with a hostile nearby agent (Phase 4 conflict). */
+  Confront: 11,
 } as const;
 
 export type AgentIntent = (typeof AgentIntent)[keyof typeof AgentIntent];
 
 /** Number of distinct intents (kept explicit so callers can pre-size buffers). */
-export const INTENT_COUNT = 7;
+export const INTENT_COUNT = 12;
 
-const NAMES: readonly string[] = ['rest', 'wander', 'seek-food', 'seek-water', 'eat', 'drink', 'seek-partner'];
+const NAMES: readonly string[] = [
+  'rest',
+  'wander',
+  'seek-food',
+  'seek-water',
+  'eat',
+  'drink',
+  'seek-partner',
+  'socialize',
+  'help',
+  'cooperate',
+  'avoid',
+  'confront',
+];
 
 /** Human-readable name for an intent kind (used in the agent inspector UI). */
 export function intentName(kind: number): string {
   return NAMES[kind] ?? 'unknown';
 }
 
-/** True for intents the movement system should act on (travel toward target). */
+/**
+ * True for intents the movement system should act on (travel toward target).
+ * The social intents all travel (toward the target agent — or, for Avoid,
+ * toward a computed flee position).
+ */
 export function isMovementIntent(kind: number): boolean {
   return (
     kind === AgentIntent.Wander ||
     kind === AgentIntent.SeekFood ||
     kind === AgentIntent.SeekWater ||
-    kind === AgentIntent.SeekPartner
+    kind === AgentIntent.SeekPartner ||
+    kind === AgentIntent.Socialize ||
+    kind === AgentIntent.Help ||
+    kind === AgentIntent.Cooperate ||
+    kind === AgentIntent.Avoid ||
+    kind === AgentIntent.Confront
   );
 }

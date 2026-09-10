@@ -1,17 +1,20 @@
 /**
  * Selected-agent panel: full per-agent inspection data, requested on demand
  * from the worker (keeps per-frame snapshots small). Shows needs, genome, the
- * current intent/target, remembered food & water locations, and — for AI
- * debugging — the per-action utility table.
+ * current intent/target, remembered food & water locations, the per-action
+ * utility table (including the Phase 4 social actions) and the agent's social
+ * life: group, loneliness, cooperation state and top remembered relationships.
  */
 
 import { requireElement } from './dom';
-import type { AgentDetails, AgentMemoryEntryDetails, GeneOrigin } from '../persistence';
+import type { AgentDetails, AgentMemoryEntryDetails, AgentRelationshipDetails, GeneOrigin } from '../persistence';
 import { HOURS_PER_DAY } from '../simulation-core/simulation/time';
 
 /** Formatting precision: needs are on a 0..100 scale, genome traits on 0..1. */
 const NEED_DECIMALS = 1;
 const GENOME_DECIMALS = 3;
+/** Formatting precision: relationship values (trust/familiarity 0..1, score −1..1). */
+const SOCIAL_DECIMALS = 2;
 
 function formatAge(hours: number): string {
   const days = Math.floor(hours / HOURS_PER_DAY);
@@ -20,6 +23,12 @@ function formatAge(hours: number): string {
 
 function formatMemoryEntry(entry: AgentMemoryEntryDetails): string {
   return `(${entry.x}, ${entry.y}) · ${(entry.value * 100).toFixed(0)}% · t${entry.lastObservedTick}`;
+}
+
+function formatRelationship(entry: AgentRelationshipDetails): string {
+  const score = `${entry.score >= 0 ? '+' : ''}${entry.score.toFixed(SOCIAL_DECIMALS)}`;
+  const status = entry.alive ? '' : ' · deceased';
+  return `#${entry.target} · rel ${score} · trust ${entry.trust.toFixed(SOCIAL_DECIMALS)} · fam ${entry.familiarity.toFixed(SOCIAL_DECIMALS)}${entry.kin ? ' · kin' : ''}${status}`;
 }
 
 export class AgentPanel {
@@ -32,6 +41,8 @@ export class AgentPanel {
   private readonly memoryBlock = requireElement('agent-memory-block');
   private readonly memoryFood = requireElement<HTMLUListElement>('agent-memory-food');
   private readonly memoryWater = requireElement<HTMLUListElement>('agent-memory-water');
+  private readonly socialBlock = requireElement('agent-social-block');
+  private readonly relationships = requireElement<HTMLUListElement>('agent-relationships');
 
   showAgent(agent: AgentDetails): void {
     this.title.textContent = `Agent #${agent.entityId}`;
@@ -60,11 +71,13 @@ export class AgentPanel {
     this.renderAiUtilities(agent);
     this.renderMemory(agent.memoryFood, this.memoryFood);
     this.renderMemory(agent.memoryWater, this.memoryWater);
+    this.renderSocial(agent);
 
     this.body.classList.remove('hidden');
     this.genomeBlock.classList.remove('hidden');
     this.aiBlock.classList.remove('hidden');
     this.memoryBlock.classList.remove('hidden');
+    this.socialBlock.classList.remove('hidden');
   }
 
   /** Shown when a selected entity no longer exists. */
@@ -74,6 +87,7 @@ export class AgentPanel {
     this.genomeBlock.classList.add('hidden');
     this.aiBlock.classList.add('hidden');
     this.memoryBlock.classList.add('hidden');
+    this.socialBlock.classList.add('hidden');
     requireElement('agent-panel-missing').textContent = `Agent #${entityId} no longer exists.`;
   }
 
@@ -83,7 +97,38 @@ export class AgentPanel {
     this.genomeBlock.classList.add('hidden');
     this.aiBlock.classList.add('hidden');
     this.memoryBlock.classList.add('hidden');
+    this.socialBlock.classList.add('hidden');
     requireElement('agent-panel-missing').textContent = 'Click an agent to inspect it.';
+  }
+
+  private renderSocial(agent: AgentDetails): void {
+    const group =
+      agent.groupId >= 0
+        ? `#${agent.groupId} · ${agent.groupMemberCount} members · cohesion ${agent.groupCohesion.toFixed(SOCIAL_DECIMALS)} · age ${agent.groupAgeTicks} ticks`
+        : 'none (isolated)';
+    this.setField('agent-group', group);
+    this.setField('agent-loneliness', agent.loneliness.toFixed(NEED_DECIMALS));
+    this.setField(
+      'agent-cooperation',
+      agent.cooperationPartner >= 0
+        ? `with #${agent.cooperationPartner} (${agent.cooperationProgress}/${agent.cooperationDuration} ticks)`
+        : 'none',
+    );
+    this.setField('agent-forage-bonus', agent.forageBonusActive ? 'active' : '—');
+
+    this.relationships.replaceChildren();
+    if (agent.relationships.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = 'knows no other agents yet';
+      this.relationships.appendChild(li);
+      return;
+    }
+    for (const relationship of agent.relationships) {
+      const li = document.createElement('li');
+      li.textContent = formatRelationship(relationship);
+      this.relationships.appendChild(li);
+    }
   }
 
   private formatParents(agent: AgentDetails): string {

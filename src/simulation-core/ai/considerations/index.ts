@@ -8,4 +8,11 @@ export {
   explorationUncertainty,
   reproductionUrgency,
   partnerDesirability,
+  lonelinessUrgency,
+  socialDrive,
+  relationshipAffinity,
+  helpNeedFactor,
+  threatFactor,
+  vulnerabilityFactor,
+  confrontationAdvantage,
 } from './considerations';

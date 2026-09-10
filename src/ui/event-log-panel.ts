@@ -22,6 +22,19 @@ const EVENT_LABELS: Record<string, string> = {
   birth: 'Birth',
   mutation: 'Mutation',
   old_age_death: 'Old-age death',
+  // Phase 4 — social evolution.
+  social_interaction: 'First contact',
+  relationship_changed: 'Relationship changed',
+  resentment: 'Resentment',
+  helped_agent: 'Helped agent',
+  cooperation_started: 'Cooperation started',
+  cooperation_completed: 'Cooperation completed',
+  conflict: 'Conflict',
+  group_created: 'Group formed',
+  group_joined: 'Group joined',
+  group_left: 'Group left',
+  group_split: 'Group split',
+  group_merged: 'Groups merged',
 };
 
 function eventTitle(type: string): string {

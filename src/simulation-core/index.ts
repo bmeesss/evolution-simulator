@@ -13,4 +13,5 @@ export * from './world';
 export * from './genetics';
 export * from './ai';
 export * from './events';
+export * from './social';
 export * from './simulation';

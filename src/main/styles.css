@@ -368,6 +368,97 @@ input {
   opacity: 0.15;
 }
 
+/* --- Groups (Phase 4) -------------------------------------------------------- */
+
+.group-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-row {
+  display: grid;
+  grid-template-columns: 12px auto 1fr;
+  grid-template-areas: "swatch name info" "bar bar bar";
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 3px;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+.group-row:hover {
+  border-color: var(--accent);
+}
+
+.group-row.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(93, 211, 158, 0.35);
+}
+
+.group-swatch {
+  grid-area: swatch;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.group-name {
+  grid-area: name;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.group-info {
+  grid-area: info;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.group-cohesion-bar {
+  grid-area: bar;
+  height: 3px;
+  background: rgba(139, 150, 165, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.group-cohesion-fill {
+  height: 100%;
+}
+
+.group-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.group-details h3,
+.group-details h4 {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* --- Agent social section (Phase 4) ------------------------------------------ */
+
+.agent-social-block h3 {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 /* --- Event log --------------------------------------------------------------- */
 
 .event-log {
