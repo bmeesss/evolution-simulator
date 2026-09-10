@@ -27,7 +27,10 @@ is built this way, and where future systems belong. It is aimed at developers
 │    world/       grid world + deterministic generation (hash noise)        │
 │    genetics/    genome definition (normalized traits)                     │
 │    ai/          Utility AI: intents, actions, utility curves,             │
-│                 considerations, memory, perception                        │
+│                 considerations, memory, perception, social targeting      │
+│    social/      relationship store, kinship, group registry (Phase 4)     │
+│    culture/     cultural memory, signal associations, learning rates,     │
+│                 group summaries, cultural effects (Phase 5)               │
 │    events/      tick-stamped event log                                    │
 │    simulation/  Simulation (fixed timestep), systems, config, time        │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -100,18 +103,22 @@ state (`getState()`/`setState()`, plus `Rng.fromSeed`/`fromState`). API:
 
 Streams: the Simulation derives independent child streams from the root seed
 by label — `sim` (tick dynamics), `spawn` (initial entity creation), `ai` (AI
-decisions: tie-break noise, wander-target draws) and `repro` (reproduction:
-child sex, crossover choice, mutation, child needs/position jitter) — via
-`deriveStreamSeed(seed, label)`. Changing how one stream consumes randomness
-can never affect another stream's numbers. All stream states are part of the
-save state.
+decisions: tie-break noise, wander-target draws), `repro` (reproduction: child
+sex, crossover choice, mutation, child needs/position jitter) and `culture`
+(Phase 5: discovery rolls, transmission/fidelity rolls, variant jitter, signal
+invention and misperception) — via `deriveStreamSeed(seed, label)`. Changing how
+one stream consumes randomness can never affect another stream's numbers. All
+stream states are part of the save state.
 
-The Utility AI consumes the `ai` stream in a fixed order per agent (seven
-tie-break jitter draws in `ActionKind` order, then wander-target draws only
-when Wander wins), so AI RNG consumption never depends on which action won —
+The Utility AI consumes the `ai` stream in a fixed order per agent (seventeen
+tie-break jitter draws in `ActionKind` order, then wander-target draws only when
+Wander wins), so AI RNG consumption never depends on which action won —
 re-running the same state always consumes the same numbers. Reproduction
-randomness lives entirely on `repro`, so adding/removing births never shifts
-the `sim`/`spawn`/`ai` streams.
+randomness lives entirely on `repro`, so adding/removing births never shifts the
+`sim`/`spawn`/`ai` streams; cultural randomness lives entirely on `culture`, so
+culture can be tuned without perturbing the older streams (and culture draws
+depend only on how many cultural events actually happened, which is itself
+deterministic).
 
 World generation consumes **no stream at all**: its value noise hashes
 `(seed, x, y)` directly (`rng/hash.ts` → `world/noise.ts`), so the world is a
@@ -140,12 +147,14 @@ Practical ECS: `EntityRegistry` + one `ComponentStore` per component
   energy — 0..100), `age` (ageHours), `health` (0..100), `genome`
   (intelligence, strength, speed, fertility, socialTendency — normalized
   0..1), `intent` (kind + movement target + targetEntity — the AI seam),
-  `aiState` (the twelve Utility AI base scores — seven survival + five
-  social — persisted for the debug view and the determinism tests without
-  recomputing the AI), `lineage` (generation, parentA, parentB),
+  `aiState` (the seventeen Utility AI base scores — seven survival + five
+  social + five cultural — persisted for the debug view and the determinism
+  tests without recomputing the AI), `lineage` (generation, parentA, parentB),
   `reproductive` (binary sex, fertility-scaled reproduction cooldown, cached
-  eligibility flag), and `social` (loneliness, groupId, groupJoinTick,
-  cooperation session target/progress, forage-bonus ticks, lastConflictTick).
+  eligibility flag), `social` (loneliness, groupId, groupJoinTick, cooperation
+  session target/progress, forage-bonus ticks, lastConflictTick) and `culture`
+  (signal/teach cooldowns, alert ticks, last emitted token + tick, last
+  successful forage tick).
 - **Memory** is a dedicated variable-length store (`ai/memory/memory-store.ts`,
   exposed as `ecs.memory`): per-agent bounded capacity, a flat typed-array
   arena with a free-list, and eviction of the least-valued entry. It lives
@@ -168,9 +177,19 @@ is part of the determinism contract:
 ```
 selectIntents → moveAgents → interactWithResources → updateSocialInteractions
   → updateNeeds → updateDeaths → updateSocialState → updateMemory
-  → regenerateResources → updateAging → updateMortality → updateReproduction
-  → updateGroups → tick++
+  → updateCulture → updateSignals → regenerateResources → updateAging
+  → updateMortality → updateReproduction → updateGroups → tick++
 ```
+
+`updateCulture`/`updateSignals` run after the survival and social systems,
+because they observe what happened this tick (who foraged successfully, who
+socialized with whom, who is fleeing) rather than deciding anything: the
+resource system stamps `lastForageTick`, the social layer has already updated
+relationships, and the moment an item is transmitted here, the learner holds it
+on the same tick. Signals run after culture so a teaching event and a signal
+emitted in the same tick are processed in a fixed, documented order; neither
+system feeds back into `selectIntents` until the next tick, which keeps the
+decision/observation split intact.
 
 `updateReproduction` runs last-but-one so a child is born at age 0 and only
 acts on the following tick; `updateMortality` adds age pressure after aging
@@ -182,11 +201,12 @@ that died this tick are already gone; group detection closes the tick
 (no-op unless `tick % detectionIntervalTicks === 0`).
 
 `ai/` owns *decisions*; systems own *consequences*. The Utility AI
-(`ai/utility-ai.ts`) scores the twelve candidate actions (Rest, Wander,
+(`ai/utility-ai.ts`) scores the seventeen candidate actions (Rest, Wander,
 SeekFood, SeekWater, Eat, Drink, SeekPartner, Socialize, Help, Cooperate,
-Avoid, Confront) with bounded [0, 1] utilities, applies deterministic
-tie-break noise + action hysteresis (twelve unconditional jitter draws per
-agent per tick — AI RNG consumption never depends on which action wins), and
+Avoid, Confront, Teach, SignalDanger, SignalFood, SignalWater, SignalFollow)
+with bounded [0, 1] utilities, applies deterministic tie-break noise + action
+hysteresis (seventeen unconditional jitter draws per agent per tick — AI RNG
+consumption never depends on which action wins), and
 writes the winning intent into the same `intent` store every other system
 already reads.
 
@@ -220,17 +240,25 @@ Messages (worker → main): `ready {seed, running, multiplier, world}` ·
 echoed — used by the dev handle and the browser smoke test.
 
 Snapshots (`persistence/snapshots.ts`) are **compact and versioned**
-(`SNAPSHOT_FORMAT_VERSION = 4`): per frame only tick/time/population/births/
+(`SNAPSHOT_FORMAT_VERSION = 5`): per frame only tick/time/population/births/
 deaths/max-generation/averages/resources/trait-distributions plus SoA typed
 arrays (ids, x, y, strength, intelligence, speed, intent kind, groupId,
-cooperation target, conflict flash) and bounded social aggregates (group
-count/sizes, active relationships, average score/trust, cooperation/conflict
-counters, isolated agents) — a `formatVersion` field allows the format to
-evolve (delta snapshots, binary payloads) without ambiguity. Full per-agent
+cooperation target, conflict flash, last signal token + flash flag), bounded
+social aggregates (group count/sizes, active relationships, average score/trust,
+cooperation/conflict counters, isolated agents), a bounded culture block (the
+`cultureStats` counters plus currently-held items/associations/holders) and a
+bounded per-group cultural headline (dominant knowledge + share) — a
+`formatVersion` field allows the format to evolve (delta snapshots, binary
+payloads) without ambiguity. Detailed cultural state (an agent's items with
+strength/origin/age, its signal associations, a group's traditions, conventions
+and similarities) is fetched on demand only for the selected agent/group, so no
+large cultural payload ever crosses the boundary per frame. Full per-agent
 data is fetched on demand via `get-agent` (which also returns the live
-twelve-action AI utility table, movement target, memory lists, life stage,
-sex, lineage, per-gene inheritance origins and the top remembered
-relationships for the inspector), and per-group details via `get-group` —
+seventeen-action AI utility table, movement target, memory lists, cultural
+knowledge/signal associations/norm strengths and cooldowns, life stage, sex,
+lineage, per-gene inheritance origins and the top remembered relationships for
+the inspector), and per-group details via `get-group` (which derives the group's
+cultural profile and its similarity to the other groups from member state) —
 the whole social graph is never sent per frame. Per-frame cost stays
 O(population) with small constants at 10 snapshots/second even for thousands
 of agents. The worker rate-limits snapshots to `snapshotIntervalMs` (100 ms)
@@ -279,7 +307,8 @@ Results land in a reused module-level scratch (the established
 
 ### The five social actions
 
-Added to the Utility AI as first-class scored actions (twelve total): the AI
+Added to the Utility AI as first-class scored actions (Phase 4; together with
+the Phase 5 teaching/signalling actions the AI now scores seventeen): the AI
 layer computes utilities; systems apply consequences.
 
 | Action | Utility shape | Consequence (social system) |
@@ -372,7 +401,170 @@ relationships, groups and social stats; save → restore → continue is
 bit-identical to an uninterrupted run (enforced by tests and by
 `runDeterminismCheck()`).
 
-## 9. Events
+## 9. The culture layer (Phase 5)
+
+**Culture is not genetics.** Genes are copied by `reproduction-system.ts` from
+parents to children with crossover and mutation. Cultural knowledge is copied by
+exactly one mechanism: the `culture-system.ts` transmission passes, which run
+only when two agents actually interacted this tick. A newborn gets an empty
+cultural memory, always.
+
+### The item model (`culture/knowledge.ts`)
+
+A knowledge item is four integers plus metadata:
+
+| field | meaning |
+| --- | --- |
+| `type` | 0 food location, 1 water location, 2 foraging technique, 3 social norm |
+| `tileX`, `tileY` | the believed location (−1 for tile-less kinds) |
+| `variantId` | technique variant 0–3 (`Forest`, `Grass`, `Sand`, `Mountain`) or norm 0–2 (`HELP_OTHERS`, `SHARE_FOOD`, `AVOID_CONFLICT`) |
+| `strength` | 0–1 confidence, reinforced by use/teaching, eroded by contradiction and decay |
+| `origin` | 0 discovered, 1 taught, 2 imitated (how *this* agent came to know it) |
+| `sourceEntity` | who taught it (−1 for own experience) |
+| `learnedTick`, `lastReinforcedTick`, `reinforceCount` | provenance for the inspector and for reinforcement |
+
+There is deliberately no text, no IDs pointing to external content and no
+free-form data: culture stays a small, comparable, serializable numeric record
+(so two agents' knowledge can be diffed, aggregated and rendered without any
+string generation at simulation time). Labels exist only at the UI boundary
+(`knowledgeLabel()` / `signalTokenName()`).
+
+### Cultural memory (`culture/cultural-memory-store.ts`)
+
+The store mirrors the Phase 2 individual `MemoryStore`: a flat arena with a free
+list, parallel typed-array columns, an intrusive per-agent chain (newest first)
+and a deterministic carrier list. Each agent holds at most
+`culture.memory.capacity` items (default 10); when a new item would exceed the
+cap, the weakest item is evicted. Learning an item the agent already holds
+refreshes it in place (raising strength and bumping the reinforce count) instead
+of consuming a second slot. Because indices are reused, removals patch the
+carrier list with a swap and leave the freed slot on the free list — the arena is
+bounded by peak concurrent knowledge, not by total historical learning.
+
+**Individual memory vs cultural memory** are separate stores with separate
+semantics: `ecs.memory` (Phase 2) is "I saw this here", `ecs.culturalMemory` is
+"this is something I know and could pass on". A personal memory can decay to
+nothing without touching culture, and a taught item is knowledge even if the
+agent has never visited the place.
+
+### Transmission (`culture-system.ts` + `culture/learning.ts`)
+
+Per tick, one bounded pass over each agent's chain handles maintenance, then two
+event-driven passes handle sharing:
+
+1. **Maintenance** — each item decays by `baseDecayPerHour` (reduced by
+   intelligence); the resource system has already stamped whether this agent
+   successfully ate/drank this tick, so a location that paid off is reinforced,
+   while standing on a remembered patch that turned out empty is a
+   contradiction that weakens it. Items below `forgetThreshold` are removed, and
+   a confident item (≥ `knownThreshold`) that fades away fires `knowledge_lost`.
+   New knowledge can only be born here by **discovery**: a fraction of
+   successful forages produces a shareable location item, a rarer one produces
+   the technique of the terrain the agent forages on (`habitatMatchChance`
+   makes it usually local, which is why neighbouring habitats specialize
+   differently), and performing (or deliberately not performing) a help/share/
+   restraint act can crystallize the corresponding norm.
+2. **Teaching** — for each agent whose Utility AI chose `Teach`, the teacher
+   must be off cooldown, have enough energy/health, and be within
+   `social.interaction.radiusTiles` of its chosen learner, which must be missing
+   the item. The attempt then costs energy and starts a cooldown *whether or not
+   it succeeds* (time spent teaching is time not foraging), and succeeds with
+   `transmissionChance(...) = base × affinity(relationship) × familiarity ×
+   (1 + intelligenceBonus·learnerIntelligence) × socialTendencyFactor ×
+   itemStrengthFactor`. Intelligence helps but never decides: a friendly,
+   familiar, strong item beats a clever stranger. A successful transfer copies
+   the item with `learnedStrengthFactor` applied.
+3. **Imitation** — an agent actively socializing/helping/cooperating within
+   reach of a model may pick up an item at a much lower probability, and only
+   for something it can observe (watching a neighbour's successful forage
+   teaches that patch). This is the only passive pathway, and it is per
+   interaction — there is no ambient diffusion.
+
+**Variation and drift**: with probability `1 − fidelity` a transmission produces
+a *variant*: location items drift by at most `locationJitterTiles` (clamped to
+the world), technique/norm variants shift to a neighbouring value in their
+alphabet. Variants are created only inside `applyTransmission()`, never on a
+tick boundary, so knowledge cannot mutate on its own.
+
+### Proto-communication (`culture/signals.ts`, `culture/signal-store.ts`, `signal-system.ts`)
+
+This is **scaffolding for communication, not language**: a closed alphabet of 16
+arbitrary tokens (`Signal_01`…`Signal_16`), five meaning categories
+(`FOOD`, `WATER`, `DANGER`, `FOLLOW`, `HELP`), no grammar, no composition, no
+arbitrary word generation. The system exists to show how a shared convention can
+emerge from associative learning alone.
+
+- An agent emits by choosing a signal action; the token it uses is the one it
+  already associates with the meaning (if known) or a deterministically invented
+  one that does not already mean something else to it.
+- **Hearing is spatial**: listeners are gathered from the 3×3 social-index cells
+  around the emitter (the same spatial structure the social layer uses), capped
+  by `maxListenersPerEmission`, and filtered by `hearingRadiusTiles`. There is
+  no global broadcast anywhere. Listening also has an attention budget
+  (`maxObservationsPerTick` per listener, `maxListenersPerEmission` per
+  emission).
+- **Learning is associative**: a listener sees the emitter's situation, derives
+  the meaning it can observe (danger from fleeing/alert/threat proximity, food
+  or water from the tile, help from low health/energy, follow from movement
+  intents), and reinforces the `(token, meaning)` association. Competing
+  meanings of the same token fade. Crossing `knownThreshold` fires
+  `signal_learned`; only then can the listener *decode* that token (a decoded
+  danger signal also raises its `alertTicks`, which makes it warier).
+- **Misperception**: with `misperceptionChance` a listener hears a neighbouring
+  token instead — bounded variation inside the alphabet, the only "noise" in the
+  channel.
+- Associations are bounded twice: `maxAssociationsPerAgent` per agent and
+  `maxMeaningsPerToken` per token, with weakest-first eviction.
+
+Because the token↔meaning mapping is learned per agent from what each one
+happened to observe, different places end up with different conventions, and the
+group inspector's "signal conventions" list is a *summary of what the members
+learned*, not a table the simulation consults.
+
+### Culture → behaviour (`culture/effects.ts`)
+
+`collectCulturalEffects()` performs one bounded walk per agent and returns the
+best known food/water location, the strongest technique and each norm's
+strength. `utility-ai.ts` turns those into bounded multipliers: a believed
+location lifts `SeekFood`/`SeekWater` **only when the need cannot be satisfied
+on the current tile** (without that guard a strong belief outranks standing on a
+full patch — observed as a population collapse), a technique lifts foraging
+utility (fully on its home terrain, partly elsewhere), `HELP_OTHERS`/
+`SHARE_FOOD` lift helping/cooperating, and `AVOID_CONFLICT` damps *marginal*
+confrontations while yielding to desperation (`normAvoidSpan`). Knowledge
+therefore re-enters the same utility curves as every other consideration —
+there is no separate cultural behaviour script, and no cultural fitness score
+anywhere: an item spreads because agents choose to teach it and learners happen
+to pick it up.
+
+### Group culture and similarity (`culture/group-culture.ts`)
+
+`summarizeCulture()` derives a group's profile purely from the cultural memory
+and signal associations of the members the caller passes in: carriers, distinct
+items, average strength, diversity (normalized entropy of the carrier
+distribution), the most widespread items, traditions (held by at least
+`traditionShare` of members), norm carriers, signal carriers and the per-token
+conventions. All lists are bounded (`maxItems`, `maxTraditions`, `maxSignals`).
+
+`culturalSimilarity()` combines a knowledge term (cosine similarity of the
+item-share vectors) with a signal term (share-weighted agreement of token
+meanings) in [0, 1]. Only terms that can discriminate the two sets are counted:
+two groups that use no signals are compared on knowledge alone, and a set with
+no culture at all shares nothing. `averagePairwiseSimilarity()` provides the
+global statistic with a bounded number of comparisons
+(`maxSimilarityGroups`). This metric is reporting-only — no system reads it.
+
+### Determinism and persistence
+
+All cultural randomness (discovery rolls, transmission rolls, fidelity checks,
+jitter, invention, misperception) comes from the dedicated `culture` RNG stream
+(`ctx.cultureRng`), which is part of the save state. The save format
+(`SAVE_FORMAT_VERSION = 5`) adds the `culture` stream, the `cultureStats`
+counters and the two new stores, and the snapshot format
+(`SNAPSHOT_FORMAT_VERSION = 5`) adds the culture block, the signal flash columns
+for the renderer and the on-demand cultural details for the inspectors.
+
+## 10. Events
 
 `simulation-core/events/events.ts`: bounded log; every event carries
 `tick` + `timeHours` (+ optional `entityId`, `detail`). The worker drains
@@ -384,23 +576,31 @@ follows). Types: `simulation_started`, `simulation_reinitialized`,
 `birth`, `mutation`, `old_age_death`, plus the Phase 4 social types
 (`social_interaction`, `relationship_changed`, `resentment`, `helped_agent`,
 `cooperation_started`, `cooperation_completed`, `conflict`, `group_created`,
-`group_joined`, `group_left`, `group_split`, `group_merged`) — all fired on
-state transitions (band crossings, session completions, lifecycle changes),
-never per tick. Event history is not persisted yet (deliberate — later
-phase).
+`group_joined`, `group_left`, `group_split`, `group_merged`), plus the Phase 5
+cultural types (`knowledge_discovered`, `knowledge_taught`, `knowledge_learned`,
+`knowledge_lost`, `signal_emitted`, `signal_learned`,
+`cultural_variant_created`, `norm_learned`) — all fired on state transitions
+(band crossings, session completions, lifecycle changes, successful
+transmissions and threshold crossings), never per tick. Cultural events are
+bounded by construction: transmissions require an interaction and respect
+cooldowns, a `knowledge_lost` can only fire once per forgotten item, and
+`signal_emitted` is only recorded when at least one listener actually heard the
+signal. Event history is not persisted yet (deliberate — later phase).
 
-## 10. Persistence
+## 11. Persistence
 
 `persistence/serialization.ts` defines the versioned save format
-(`SAVE_FORMAT_VERSION = 4`) capturing everything needed to resume bit-for-bit:
-seed, tick, config, RNG stream states (all four streams — sim, spawn, ai,
-repro), world arrays (including the food/water caps) and all component stores
-plus the memory store. The version was bumped for Phase 2 (`aiState` store,
-memory store, third RNG stream), Phase 3 (reproduction, lineage + a fourth
-RNG stream) and Phase 4 (the `social` component store, the relationship
-store — including per-pair cooldowns and resentment timers — the group
-registry and the social statistics counters; no new RNG stream: the social
-layer is deterministic arithmetic on state). Round-trip and continuation equality are enforced by tests and by
+(`SAVE_FORMAT_VERSION = 5`) capturing everything needed to resume bit-for-bit:
+seed, tick, config, RNG stream states (all five streams — sim, spawn, ai,
+repro, **culture**), world arrays (including the food/water caps) and all
+component stores plus the memory store. The version was bumped for Phase 2
+(`aiState` store, memory store, third RNG stream), Phase 3 (reproduction,
+lineage + a fourth RNG stream), Phase 4 (the `social` component store, the
+relationship store — including per-pair cooldowns and resentment timers — the
+group registry and the social statistics counters; no new RNG stream: the social
+layer is deterministic arithmetic on state) and Phase 5 (the `culture` component
+store, the `culturalMemory` and `signals` stores, the `cultureStats` counters
+and the fifth — `culture` — RNG stream). Round-trip and continuation equality are enforced by tests and by
 `runDeterminismCheck()` (`persistence/determinism-check.ts`), which the worker
 exposes as the `verify-determinism` command and the dev handle as
 `window.__evosim.verifyDeterminism()` (dev builds only — production code has
@@ -411,7 +611,7 @@ state, so it is deep-frozen: accidental mutation of the default fails loudly,
 and per-run tuning goes through `cloneConfig()` (which returns a normal
 mutable copy).
 
-## 11. Performance guidelines
+## 12. Performance guidelines
 
 Designed for hundreds to thousands of agents:
 
@@ -431,16 +631,28 @@ Designed for hundreds to thousands of agents:
   relationship chain (O(pop × capacity)); relationship storage is hard-bounded
   by capacity with eviction; group detection is periodic (union-find over
   relationship-chain edges, never all pairs) and its scratch is rebuilt per
-  run, never serialized. Measured on this repo's CI machine (see
-  `tests/social-performance.test.ts`): ~2.6 ms/tick at 50 agents, ~49 ms/tick
-  at 1000 agents on the default 64×64 world — near-linear growth, asserted by
-  test.
+  run, never serialized.
+- **The culture layer follows the same discipline**: one bounded walk per agent
+  per tick (its own chain, ≤ `culture.memory.capacity` items) for decay,
+  reinforcement, discovery and norms; teaching/imitation work is proportional
+  to the agents that actually chose a sharing action that tick (never
+  population²); listening walks the 3×3 social-index cells around each emitter
+  and stops at `maxListenersPerEmission`; every per-tick scratch buffer is
+  module-level and reused (`emitterScratch`, `attentionScratch`, the cultural
+  effects scratch), so no allocations happen in a steady state. Stores are
+  hard-bounded (capacity per agent, associations per agent and per token, event
+  log ring) and their free lists mean historical churn cannot grow them.
+  Measured with the same harness as the Phase 4 numbers below — 50 agents:
+  3.34 ms/tick before / 4.09 ms/tick after; 100 agents: 4.88 / 5.16;
+  500 agents: 22.30 / 27.74; 1000 agents: 42.14 / 52.08 — i.e. roughly +24 % at
+  scale, and near-linear growth, asserted by
+  `tests/culture-performance.test.ts`.
 - Agents are never DOM elements; rendering is batched canvas circles over a
   pre-baked terrain layer (the world rasterizes once, not per frame).
 - Worker-side per-tick time is measured (EMA) and surfaced in the debug
   overlay so regressions are visible early.
 
-## 12. Scope ladder (Phases 1–4 done — what stays out)
+## 13. Scope ladder (Phases 1–5 done — what stays out)
 
 Phase 2 delivered the static world + autonomous agent survival loop (needs,
 energy, health, learning, determinism). **Phase 3 added evolution**: binary-sex
@@ -457,6 +669,24 @@ conflict from competition, and derived social groups with persistent identity.
 Social behavior affects evolution only *indirectly* — through survival and
 reproduction, never through an explicit social fitness term.
 
+**Phase 5 added the cultural layer** (see §9): a bounded per-agent cultural
+memory that is strictly separate from individual memory, transmission through
+real interactions (teaching and observation) with relationship-, familiarity-,
+intelligence-, social-tendency- and strength-driven probabilities and real
+costs, bounded variation/drift during transmission, cultural loss by decay,
+forgetting, isolation and death, derived group-level culture with a bounded
+similarity metric, small utility-affecting norms, and an intentionally primitive
+**proto-communication scaffolding** — 16 arbitrary tokens whose meanings are
+learned by association and end up local to whatever groups happened to
+interact.
+
+**Genes ≠ culture, again:** culture never enters reproduction. Children inherit
+a genome and nothing else; every item an agent holds was either discovered by
+its own experience or transmitted to it by another agent, and every transmitted
+item is verified in tests to have come from a source that was physically within
+interaction reach at that tick. There is no global copy, no ambient exposure and
+no inheritance shortcut.
+
 **Designer scaffolding vs. emergence** — what is designed: the mechanics
 (utility formulas, thresholds, capacities, cooldowns, the clustering
 algorithm) and their tunables in `config.ts`. What is emergent: every social
@@ -470,17 +700,27 @@ confrontation → conflict chain (both regimes are locked in by
 `tests/social-emergence.test.ts`).
 
 Still deliberately out of scope (now and likely forever for this project):
-pregnancy/gestation, neural networks, LLM integration, NEAT; and the
-civilization ladder (culture, memes, language, communication, technology,
-agriculture, economy, trade, warfare, cities, civilization). Note that
-"warfare" here means organized inter-group combat systems — Phase 4's
-individual confrontations over contested resources are as far as conflict
-goes. Learning stays a simple, deterministic associative update (bounded
-memory values + intelligence-modulated rates), never a neural model.
+pregnancy/gestation, neural networks, LLM integration, NEAT; and the rest of the
+civilization ladder (technology, agriculture, economy, trade, warfare, cities,
+civilization). Note that "warfare" here means organized inter-group combat
+systems — Phase 4's individual confrontations over contested resources are as
+far as conflict goes. Learning stays a simple, deterministic associative update
+(bounded memory values + intelligence-modulated rates), never a neural model.
+
+**About the signal system (important):** Phase 5's communication is
+*proto-communication scaffolding*, not language. There is no grammar, no
+syntax, no composition, no vocabulary growth and no arbitrary text generation —
+only 16 fixed tokens, five fixed meaning categories, and association learning
+over repeated, spatially local observations. Agents do not "talk", do not
+describe anything, and have no model of each other's minds. The point is to show
+that a shared convention can emerge from individual associative learning plus
+transmission, exactly as a foraging tradition does. Nothing in the simulation
+claims consciousness, culture in the anthropological sense, or human-level
+language.
 
 ---
 
-## 13. Development conventions — where to add things
+## 14. Development conventions — where to add things
 
 ### Add a new component
 
@@ -520,6 +760,26 @@ loop (keeping the seven-actions-first invariant for RNG determinism), and (3)
 implement its effects in the relevant system (movement/needs/resource). The
 *selection* lives in `ai/`; the *effects* live in systems. Keep selection
 deterministic: any randomness must come from `ctx.aiRng`.
+
+### Add a new kind of cultural knowledge
+
+1. Append the value to `KnowledgeType` (`culture/knowledge.ts`). Appending is
+   safe for saves; renumbering existing values is not.
+2. Teach the systems about it, exhaustively: `describeKnowledge()`/
+   `knowledgeLabel()` (labels), `collectCulturalEffects()` (the switch must
+   handle every kind so a new type cannot silently do nothing), the discovery
+   pass in `culture-system.ts`, and any Utility AI multiplier in
+   `utility-ai.ts`.
+3. If it needs a bounded variant alphabet, extend `shiftVariant()` and document
+   the count next to the type (techniques and norms already do this).
+4. Add tests to `tests/culture-memory.test.ts` (store semantics) and the
+   relevant behaviour/variation suite, then run the determinism suite.
+
+Signals are intentionally closed: adding a meaning means extending
+`SignalMeaning` + `SIGNAL_MEANING_COUNT` + `signalMeaningName()` and the
+learning path in `learnAssociation()` — but the *token alphabet stays 16*.
+Proto-communication is scaffolding; growing the vocabulary is not a goal, and
+generating arbitrary words/messages is explicitly out of scope.
 
 ### Add a new event
 

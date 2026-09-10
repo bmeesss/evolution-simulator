@@ -33,4 +33,10 @@ export const ACTION_NAMES: readonly string[] = [
   'Cooperate',
   'Avoid',
   'Confront',
+  // Phase 5 — culture & proto-communication: teaching and the four signals.
+  'Teach',
+  'SignalDanger',
+  'SignalFood',
+  'SignalWater',
+  'SignalFollow',
 ];

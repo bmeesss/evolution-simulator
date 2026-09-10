@@ -84,6 +84,12 @@ export const AiStateSchema = {
   cooperate: Float32Array,
   avoid: Float32Array,
   confront: Float32Array,
+  // Phase 5 — culture & communication (same order as ActionKind).
+  teach: Float32Array,
+  signalDanger: Float32Array,
+  signalFood: Float32Array,
+  signalWater: Float32Array,
+  signalFollow: Float32Array,
 };
 
 /**
@@ -108,6 +114,39 @@ export const SocialSchema = {
   cooperationTicks: Uint16Array,
   forageBonusTicks: Uint16Array,
   lastConflictTick: Uint32Array,
+};
+
+/**
+ * Per-agent culture state (Phase 5) — the fixed numeric columns of the cultural
+ * layer. The variable-length per-agent data (cultural knowledge items and
+ * signal-meaning associations) lives in dedicated stores
+ * (`culture/cultural-memory-store.ts`, `culture/signal-store.ts`), exactly like
+ * environmental memory and social relationships.
+ *
+ *   signalCooldownTicks  ticks left before this agent may emit a signal again
+ *   teachCooldownTicks   ticks left before this agent may teach again
+ *   alertTicks           ticks of wariness left after hearing a known danger signal
+ *   lastSignalToken      token of the most recent emission (255 = none); drives
+ *                        the renderer's signal flash and the inspector
+ *   lastSignalTick       tick of the most recent emission
+ *   lastForageTick       tick of the most recent successful Eat/Drink (written by
+ *                        the resource system) so the culture system can credit
+ *                        discoveries and reinforcement without guessing
+ */
+/**
+ * `lastForageTick` sentinel for "this agent has never foraged". Using a tick
+ * value that can never occur (rather than 0) keeps tick 0 unambiguous: without
+ * it, every agent would look like it had foraged on the very first tick.
+ */
+export const NO_FORAGE_TICK = 0xffff_ffff;
+
+export const CultureStateSchema = {
+  signalCooldownTicks: Uint16Array,
+  teachCooldownTicks: Uint16Array,
+  alertTicks: Uint16Array,
+  lastSignalToken: Uint8Array,
+  lastSignalTick: Uint32Array,
+  lastForageTick: Uint32Array,
 };
 
 /**

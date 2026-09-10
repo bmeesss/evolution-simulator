@@ -20,6 +20,7 @@ import type {
   SerializedWorld,
   SerializedGroupRegistry,
   SerializedSocialStats,
+  SerializedCultureStats,
 } from '../simulation-core';
 
 /**
@@ -33,25 +34,33 @@ import type {
  * for Phase 4 (4): adds the `social` component store, the five new social
  * intent kinds + aiState columns, the sparse relationship store, the emergent
  * group registry (identity, membership, pending-cluster hysteresis), the
- * cumulative social statistics and the `social` config section. Versions 1–3
- * saves are no longer loadable (the new sections are required).
+ * cumulative social statistics and the `social` config section. Bumped for
+ * Phase 5 (5): adds the dedicated `culture` RNG stream, the `culture` component
+ * store (signal/teach cooldowns, alert window, last signal + last successful
+ * forage stamps), the bounded per-agent cultural-memory store, the bounded
+ * per-agent signal-meaning association store, the cumulative cultural
+ * statistics and the `culture` config section. Save versions 1–4 are no longer
+ * loadable (the new sections are required).
  *
- * Phase 4 deliberately introduces NO new RNG stream: social decisions consume
- * the existing `ai` stream (twelve tie-break draws per agent per tick) and
- * every social system is otherwise deterministic given state.
+ * Phase 4 deliberately introduced NO new RNG stream (social decisions consume
+ * the `ai` stream). Phase 5 adds exactly one: `culture`, drawn for transmission
+ * rolls, cultural drift/variant offsets, signal invention and misperception, so
+ * cultural randomness can never shift the sim/spawn/ai/repro streams and a
+ * restored save continues the exact same cultural history.
  */
-export const SAVE_FORMAT_VERSION = 4;
+export const SAVE_FORMAT_VERSION = 5;
 
 export interface SimulationSaveState {
   readonly version: number;
   readonly seed: number;
   readonly tick: number;
   readonly config: SimulationConfig;
-  readonly rng: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState };
+  readonly rng: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState; culture: RngState };
   readonly world: SerializedWorld;
   readonly ecs: SerializedEcs;
   readonly groups: SerializedGroupRegistry;
   readonly socialStats: SerializedSocialStats;
+  readonly cultureStats: SerializedCultureStats;
 }
 
 export function serializeSimulation(sim: Simulation): SimulationSaveState {
@@ -65,6 +74,7 @@ export function serializeSimulation(sim: Simulation): SimulationSaveState {
     ecs: sim.ecs.serialize(),
     groups: sim.getSerializedGroups(),
     socialStats: sim.getSerializedSocialStats(),
+    cultureStats: sim.getSerializedCultureStats(),
   };
 }
 
@@ -84,6 +94,7 @@ export function deserializeSimulation(save: SimulationSaveState): Simulation {
     ecs: save.ecs,
     groups: save.groups,
     socialStats: save.socialStats,
+    cultureStats: save.cultureStats,
   });
 }
 

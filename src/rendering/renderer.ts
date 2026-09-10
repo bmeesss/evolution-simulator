@@ -24,6 +24,9 @@ import {
   groupColor,
   conflictFlashColor,
   cooperationLinkColor,
+  isSignalling,
+  signalFlashRadiusTiles,
+  signalTokenColor,
 } from './agent-visuals';
 
 // Terrain palette (RGB). Named per terrain type; food tints land tiles.
@@ -286,6 +289,16 @@ export class WorldRenderer {
           ctx.fillStyle = flash;
           ctx.fill();
         }
+      }
+
+      // Phase 5: a signal flash — a small dot offset above the agent, coloured
+      // by token. Shows proto-communication happening without implying any
+      // permanent meaning (the inspector shows what the agent has learned).
+      if (isSignalling(agents.signalToken[i], agents.signalRecent[i])) {
+        ctx.beginPath();
+        ctx.arc(x, y - radius - tile * 0.35, Math.max(2, tile * signalFlashRadiusTiles()), 0, Math.PI * 2);
+        ctx.fillStyle = signalTokenColor(agents.signalToken[i]);
+        ctx.fill();
       }
 
       if (agents.ids[i] === selectedEntityId) {

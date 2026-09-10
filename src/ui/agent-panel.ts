@@ -2,12 +2,27 @@
  * Selected-agent panel: full per-agent inspection data, requested on demand
  * from the worker (keeps per-frame snapshots small). Shows needs, genome, the
  * current intent/target, remembered food & water locations, the per-action
- * utility table (including the Phase 4 social actions) and the agent's social
- * life: group, loneliness, cooperation state and top remembered relationships.
+ * utility table (including the Phase 4 social actions and the Phase 5
+ * teaching/signal actions), the agent's social life (group, loneliness,
+ * cooperation state, top relationships) and its cultural life: what it knows,
+ * where each item came from, which tokens it has learned to read and the
+ * teach/signal cooldowns that gate further transmission.
+ *
+ * Note on terminology: the signal list shows LEARNED ASSOCIATIONS
+ * ("Signal_04 → FOOD"), not a dictionary — this is proto-communication
+ * scaffolding, and every meaning shown was acquired by this agent through
+ * observation or teaching.
  */
 
 import { requireElement } from './dom';
-import type { AgentDetails, AgentMemoryEntryDetails, AgentRelationshipDetails, GeneOrigin } from '../persistence';
+import type {
+  AgentDetails,
+  AgentKnowledgeDetails,
+  AgentMemoryEntryDetails,
+  AgentRelationshipDetails,
+  AgentSignalDetails,
+  GeneOrigin,
+} from '../persistence';
 import { HOURS_PER_DAY } from '../simulation-core/simulation/time';
 
 /** Formatting precision: needs are on a 0..100 scale, genome traits on 0..1. */
@@ -23,6 +38,16 @@ function formatAge(hours: number): string {
 
 function formatMemoryEntry(entry: AgentMemoryEntryDetails): string {
   return `(${entry.x}, ${entry.y}) · ${(entry.value * 100).toFixed(0)}% · t${entry.lastObservedTick}`;
+}
+
+function formatKnowledge(entry: AgentKnowledgeDetails): string {
+  const source = entry.sourceEntity >= 0 ? ` · from #${entry.sourceEntity}` : ' · own discovery';
+  return `${entry.label} · ${entry.type} · ${(entry.strength * 100).toFixed(0)}% · ${entry.origin} · used ${entry.reinforceCount}×${source}`;
+}
+
+function formatSignal(entry: AgentSignalDetails): string {
+  const known = entry.known ? 'known' : 'weak';
+  return `${entry.token} → ${entry.meaning} · ${(entry.strength * 100).toFixed(0)}% (${known}) · seen ${entry.exposures}× · t${entry.lastUpdateTick}`;
 }
 
 function formatRelationship(entry: AgentRelationshipDetails): string {
@@ -43,6 +68,10 @@ export class AgentPanel {
   private readonly memoryWater = requireElement<HTMLUListElement>('agent-memory-water');
   private readonly socialBlock = requireElement('agent-social-block');
   private readonly relationships = requireElement<HTMLUListElement>('agent-relationships');
+  private readonly cultureBlock = requireElement('agent-culture-block');
+  private readonly cultureKnowledge = requireElement<HTMLUListElement>('agent-culture-knowledge');
+  private readonly cultureSignals = requireElement<HTMLUListElement>('agent-culture-signals');
+  private readonly cultureNorms = requireElement<HTMLUListElement>('agent-culture-norms');
 
   showAgent(agent: AgentDetails): void {
     this.title.textContent = `Agent #${agent.entityId}`;
@@ -72,12 +101,14 @@ export class AgentPanel {
     this.renderMemory(agent.memoryFood, this.memoryFood);
     this.renderMemory(agent.memoryWater, this.memoryWater);
     this.renderSocial(agent);
+    this.renderCulture(agent);
 
     this.body.classList.remove('hidden');
     this.genomeBlock.classList.remove('hidden');
     this.aiBlock.classList.remove('hidden');
     this.memoryBlock.classList.remove('hidden');
     this.socialBlock.classList.remove('hidden');
+    this.cultureBlock.classList.remove('hidden');
   }
 
   /** Shown when a selected entity no longer exists. */
@@ -88,6 +119,7 @@ export class AgentPanel {
     this.aiBlock.classList.add('hidden');
     this.memoryBlock.classList.add('hidden');
     this.socialBlock.classList.add('hidden');
+    this.cultureBlock.classList.add('hidden');
     requireElement('agent-panel-missing').textContent = `Agent #${entityId} no longer exists.`;
   }
 
@@ -98,6 +130,7 @@ export class AgentPanel {
     this.aiBlock.classList.add('hidden');
     this.memoryBlock.classList.add('hidden');
     this.socialBlock.classList.add('hidden');
+    this.cultureBlock.classList.add('hidden');
     requireElement('agent-panel-missing').textContent = 'Click an agent to inspect it.';
   }
 
@@ -128,6 +161,47 @@ export class AgentPanel {
       const li = document.createElement('li');
       li.textContent = formatRelationship(relationship);
       this.relationships.appendChild(li);
+    }
+  }
+
+  private renderCulture(agent: AgentDetails): void {
+    this.setField('agent-culture-count', `${agent.knowledgeItemCount} items · ${agent.signalAssociationCount} signals`);
+    this.setField('agent-culture-last-signal', agent.lastSignal);
+    this.setField('agent-culture-alert', agent.alertTicks > 0 ? `${agent.alertTicks} ticks` : '—');
+    this.setField(
+      'agent-culture-cooldowns',
+      `teach ${agent.teachCooldownTicks} · signal ${agent.signalCooldownTicks}`,
+    );
+
+    this.renderCultureList(
+      this.cultureNorms,
+      agent.normStrengths,
+      (norm) => (norm.strength > 0 ? `${norm.norm} · ${(norm.strength * 100).toFixed(0)}%` : `${norm.norm} · not held`),
+      'no norms held',
+    );
+    this.renderCultureList(this.cultureKnowledge, agent.culturalKnowledge, formatKnowledge, 'knows nothing yet');
+    this.renderCultureList(this.cultureSignals, agent.signalAssociations, formatSignal, 'has not learned any signal meaning yet');
+  }
+
+  /** Render a bounded cultural list, falling back to a muted placeholder. */
+  private renderCultureList<T>(
+    list: HTMLUListElement,
+    entries: readonly T[],
+    format: (entry: T) => string,
+    emptyText: string,
+  ): void {
+    list.replaceChildren();
+    if (entries.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = emptyText;
+      list.appendChild(li);
+      return;
+    }
+    for (const entry of entries) {
+      const li = document.createElement('li');
+      li.textContent = format(entry);
+      list.appendChild(li);
     }
   }
 

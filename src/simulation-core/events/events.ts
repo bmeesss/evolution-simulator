@@ -46,7 +46,21 @@ export type SimulationEventType =
   | 'group_joined'
   | 'group_left'
   | 'group_split'
-  | 'group_merged';
+  | 'group_merged'
+  // Phase 5 — culture & proto-communication. All of these fire on genuine
+  // transmission/loss events (never per tick): a discovery, a successful
+  // teaching, an observed learning, a forgotten item, a signal that actually
+  // reached a listener, a first-time meaning association, a drift variant and
+  // a norm acquisition. Volume is bounded by the cooldowns and the slow decay
+  // rates, never by event throttling.
+  | 'knowledge_discovered'
+  | 'knowledge_taught'
+  | 'knowledge_learned'
+  | 'knowledge_lost'
+  | 'signal_emitted'
+  | 'signal_learned'
+  | 'cultural_variant_created'
+  | 'norm_learned';
 
 export interface SimulationEvent {
   readonly type: SimulationEventType;

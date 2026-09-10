@@ -61,6 +61,21 @@
               <div><dt>Food avail.</dt><dd id="stat-food">—</dd></div>
               <div><dt>Water avail.</dt><dd id="stat-water">—</dd></div>
             </dl>
+            <h3>Culture</h3>
+            <dl class="stats">
+              <div><dt>Knowledge items</dt><dd id="stat-culture-items">—</dd></div>
+              <div><dt>Knowledge holders</dt><dd id="stat-culture-holders">—</dd></div>
+              <div><dt>Items / holder</dt><dd id="stat-culture-density">—</dd></div>
+              <div><dt>Discoveries</dt><dd id="stat-culture-discoveries">—</dd></div>
+              <div><dt>Teachings</dt><dd id="stat-culture-taught">—</dd></div>
+              <div><dt>Imitations</dt><dd id="stat-culture-learned">—</dd></div>
+              <div><dt>Lost knowledge</dt><dd id="stat-culture-lost">—</dd></div>
+              <div><dt>Variants</dt><dd id="stat-culture-variants">—</dd></div>
+              <div><dt>Norm holders</dt><dd id="stat-culture-norms">—</dd></div>
+              <div><dt>Signals emitted</dt><dd id="stat-culture-signals-emitted">—</dd></div>
+              <div><dt>Signals heard</dt><dd id="stat-culture-signals-heard">—</dd></div>
+              <div><dt>Meanings learned</dt><dd id="stat-culture-signal-learnings">—</dd></div>
+            </dl>
           </section>
 
           <section class="panel" aria-label="History graph">
@@ -137,6 +152,21 @@
               </dl>
               <h3>Relationships</h3>
               <ul id="agent-relationships" class="memory-list"></ul>
+            </div>
+            <div id="agent-culture-block" class="agent-culture-block hidden">
+              <h3>Culture</h3>
+              <dl class="stats">
+                <div><dt>Known items</dt><dd id="agent-culture-count">—</dd></div>
+                <div><dt>Last signal</dt><dd id="agent-culture-last-signal">—</dd></div>
+                <div><dt>Alert</dt><dd id="agent-culture-alert">—</dd></div>
+                <div><dt>Teach / signal cooldown</dt><dd id="agent-culture-cooldowns">—</dd></div>
+              </dl>
+              <h3>Norms</h3>
+              <ul id="agent-culture-norms" class="memory-list"></ul>
+              <h3>Knowledge</h3>
+              <ul id="agent-culture-knowledge" class="memory-list"></ul>
+              <h3>Learned signals</h3>
+              <ul id="agent-culture-signals" class="memory-list"></ul>
             </div>
             <div id="agent-memory-block" class="agent-memory-block hidden">
               <h3>Remembered food</h3>

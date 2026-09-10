@@ -35,6 +35,15 @@ const EVENT_LABELS: Record<string, string> = {
   group_left: 'Group left',
   group_split: 'Group split',
   group_merged: 'Groups merged',
+  // Phase 5 — culture & proto-communication.
+  knowledge_discovered: 'Knowledge discovered',
+  knowledge_taught: 'Knowledge taught',
+  knowledge_learned: 'Knowledge learned',
+  knowledge_lost: 'Knowledge lost',
+  signal_emitted: 'Signal emitted',
+  signal_learned: 'Signal meaning learned',
+  cultural_variant_created: 'Cultural variant',
+  norm_learned: 'Norm learned',
 };
 
 function eventTitle(type: string): string {

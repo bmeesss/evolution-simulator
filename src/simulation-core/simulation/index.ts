@@ -21,6 +21,7 @@ export type {
   MetabolismConfig,
   MutationConfig,
   SocialConfig,
+  CultureConfig,
 } from './config';
 export type { TickContext } from './tick-context';
 export { formatTimeHours, HOURS_PER_DAY } from './time';

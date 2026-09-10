@@ -8,11 +8,13 @@
  */
 
 import type { EntityId } from '../../ecs';
+import { NO_FORAGE_TICK } from '../../ecs';
 import type { SimulationEcs } from '../../ecs';
 import { randomGenomeValues } from '../../genetics';
 import type { Rng } from '../../rng';
 import type { EventLog } from '../../events';
 import { AgentIntent } from '../../ai';
+import { NO_SIGNAL_TOKEN } from '../../culture';
 import type { World } from '../../world';
 import { TerrainType } from '../../world';
 import type { SimulationConfig } from '../config';
@@ -69,6 +71,17 @@ export function spawnInitialAgents(
       cooperationTicks: 0,
       forageBonusTicks: 0,
       lastConflictTick: 0,
+    });
+    // Culture state starts empty: founding agents know nothing cultural and
+    // have no associations — culture must be built through experience and
+    // transmission during the run.
+    ecs.culture.attach(entity, {
+      signalCooldownTicks: 0,
+      teachCooldownTicks: 0,
+      alertTicks: 0,
+      lastSignalToken: NO_SIGNAL_TOKEN,
+      lastSignalTick: 0,
+      lastForageTick: NO_FORAGE_TICK,
     });
 
     events.record('agent_spawned', { entityId: entity });

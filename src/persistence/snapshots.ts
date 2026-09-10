@@ -18,13 +18,39 @@
 import type { Simulation } from '../simulation-core';
 import type { EntityId } from '../simulation-core';
 import { intentName, ResourceType, ACTION_NAMES } from '../simulation-core';
+import {
+  NO_SIGNAL_TOKEN,
+  KnowledgeType,
+  NormId,
+  describeAssociation,
+  describeKnowledge,
+  knowledgeOriginName,
+  knowledgeTypeName,
+  normName,
+  signalMeaningName,
+  signalTokenName,
+  summarizeCulture,
+  culturalSimilarity,
+} from '../simulation-core';
 import { GENOME_KEYS } from '../simulation-core/genetics';
 import type { GenomeValues } from '../simulation-core/genetics';
 import { lifeStageForAge, lifeStageName } from '../simulation-core/simulation/life-stages';
 import type { SimulationEvent } from '../simulation-core';
 
-/** Bump when the snapshot layout changes incompatibly. */
-export const SNAPSHOT_FORMAT_VERSION = 4;
+/**
+ * Bump when the snapshot layout changes incompatibly.
+ *
+ * Phase 5 (5): adds the per-frame `culture` statistics block, the per-agent
+ * signal flash columns and the per-listed-group culture headline, and it grows
+ * the AI utility table from 12 to 17 columns (Teach + the four signal actions).
+ */
+export const SNAPSHOT_FORMAT_VERSION = 5;
+
+/** How long a signal stays visible as a flash on the emitting agent (ticks). */
+export const SIGNAL_FLASH_TICKS = 24;
+
+/** How many knowledge items a group headline tracks while choosing the dominant one. */
+const GROUP_CULTURE_TRACKED_ITEMS = 3;
 
 /** Number of bins used for trait distributions (each covers 1/BIN_COUNT of [0,1]). */
 export const TRAIT_DISTRIBUTION_BINS = 10;
@@ -34,7 +60,23 @@ export const TRAIT_DISTRIBUTION_BINS = 10;
  * built from these. MUST stay aligned with ACTION_NAMES (ai/actions).
  */
 const AI_UTILITY_COLUMNS: ReadonlyArray<
-  'rest' | 'wander' | 'seekFood' | 'seekWater' | 'eat' | 'drink' | 'seekPartner' | 'socialize' | 'help' | 'cooperate' | 'avoid' | 'confront'
+  | 'rest'
+  | 'wander'
+  | 'seekFood'
+  | 'seekWater'
+  | 'eat'
+  | 'drink'
+  | 'seekPartner'
+  | 'socialize'
+  | 'help'
+  | 'cooperate'
+  | 'avoid'
+  | 'confront'
+  | 'teach'
+  | 'signalDanger'
+  | 'signalFood'
+  | 'signalWater'
+  | 'signalFollow'
 > = [
   'rest',
   'wander',
@@ -48,6 +90,11 @@ const AI_UTILITY_COLUMNS: ReadonlyArray<
   'cooperate',
   'avoid',
   'confront',
+  'teach',
+  'signalDanger',
+  'signalFood',
+  'signalWater',
+  'signalFollow',
 ];
 
 /** How long a conflict remains visible as a red flash (ticks). */
@@ -75,6 +122,10 @@ export interface AgentVisualSnapshot {
   readonly cooperationTarget: Int32Array;
   /** 1 while a recent conflict should still flash red. */
   readonly conflictFlash: Uint8Array;
+  /** Last emitted signal token per agent (NO_SIGNAL_TOKEN = never signalled). */
+  readonly signalToken: Uint8Array;
+  /** 1 while the last signal is recent enough to flash. */
+  readonly signalRecent: Uint8Array;
 }
 
 export interface SimulationAverages {
@@ -123,8 +174,41 @@ export interface SimulationSnapshot {
   readonly agents: AgentVisualSnapshot;
   /** Social statistics (Phase 4). */
   readonly social: SocialSnapshotStats;
+  /** Cultural statistics (Phase 5). */
+  readonly culture: CultureSnapshotStats;
   /** Emergent group summary (Phase 4). */
   readonly groups: GroupsSnapshot;
+}
+
+/**
+ * Global cultural statistics (Phase 5) — cumulative counters plus cheap live
+ * aggregates. Everything here is either a persisted counter or a bounded walk
+ * over the per-agent stores (O(agents × capacity)); the expensive derived
+ * summaries (diversity, traditions, pairwise similarity) live in the
+ * ON-DEMAND inspector payloads instead, so a snapshot never carries a full
+ * cultural profile.
+ */
+export interface CultureSnapshotStats {
+  /** Cumulative counters (persisted simulation state). */
+  readonly discoveries: number;
+  readonly taught: number;
+  readonly learned: number;
+  readonly lost: number;
+  readonly variants: number;
+  readonly normsLearned: number;
+  readonly signalsEmitted: number;
+  readonly signalsHeard: number;
+  readonly signalLearnings: number;
+  /** Live: cultural items currently held, and how many agents hold any. */
+  readonly knowledgeItems: number;
+  readonly knowledgeHolders: number;
+  readonly averageKnowledgePerHolder: number;
+  /** Live: learned token→meaning associations and how many agents hold any. */
+  readonly associations: number;
+  readonly associationHolders: number;
+  /** Live: agents holding at least one norm / at least one signal meaning. */
+  readonly normCarriers: number;
+  readonly signalCarriers: number;
 }
 
 /** Global social statistics derived from live state (Phase 4). */
@@ -153,6 +237,12 @@ export interface GroupSnapshotEntry {
   /** Split lineage: parent group id (-1 spontaneous) and generation depth. */
   readonly parentId: number;
   readonly generation: number;
+  /** Phase 5: most widespread known item among members ("none" when none). */
+  readonly cultureDominant: string;
+  /** Share of members holding that item, in [0, 1]. */
+  readonly cultureDominantShare: number;
+  /** Members holding at least one cultural item. */
+  readonly cultureCarriers: number;
 }
 
 export interface GroupsSnapshot {
@@ -237,6 +327,51 @@ export interface AgentDetails {
   readonly forageBonusActive: boolean;
   /** Strongest remembered relationships (by familiarity + |score|), bounded. */
   readonly relationships: readonly AgentRelationshipDetails[];
+  /** Phase 5 — cultural inspection (bounded by the cultural capacity). */
+  readonly culturalKnowledge: readonly AgentKnowledgeDetails[];
+  /** Learned signal associations (bounded by the association capacity). */
+  readonly signalAssociations: readonly AgentSignalDetails[];
+  /** Norm strengths indexed by NormId order, for the inspector display. */
+  readonly normStrengths: readonly AgentNormDetail[];
+  readonly knowledgeItemCount: number;
+  readonly signalAssociationCount: number;
+  readonly signalCooldownTicks: number;
+  readonly teachCooldownTicks: number;
+  readonly alertTicks: number;
+  /** Last signal this agent emitted, pre-formatted ("none" when never). */
+  readonly lastSignal: string;
+  readonly lastSignalTick: number;
+}
+
+/** One cultural knowledge item, as shown in the agent inspector. */
+export interface AgentKnowledgeDetails {
+  readonly type: string;
+  /** Deterministic label, e.g. `food @ 12,30` or `forest foraging`. */
+  readonly label: string;
+  readonly strength: number;
+  readonly origin: string;
+  /** Entity that transmitted it, or -1 when the agent discovered it. */
+  readonly sourceEntity: number;
+  readonly learnedTick: number;
+  readonly lastReinforcedTick: number;
+  readonly reinforceCount: number;
+}
+
+/** One learned signal association, as shown in the agent inspector. */
+export interface AgentSignalDetails {
+  readonly token: string;
+  readonly meaning: string;
+  readonly strength: number;
+  readonly exposures: number;
+  readonly lastUpdateTick: number;
+  /** True once the association is strong enough to count as "known". */
+  readonly known: boolean;
+}
+
+/** One norm row in the agent inspector. */
+export interface AgentNormDetail {
+  readonly norm: string;
+  readonly strength: number;
 }
 
 /** One remembered relationship, as shown in the agent inspector. */
@@ -277,6 +412,53 @@ export interface GroupDetails {
   readonly topRelationships: readonly GroupRelationshipDetails[];
   /** Recent group-relevant events from the bounded log. */
   readonly recentEvents: readonly SimulationEvent[];
+  /** Phase 5 — the group's cultural profile, derived from member knowledge. */
+  readonly culture: GroupCultureDetails;
+  /** How culturally similar this group is to the other listed groups, in [0,1]. */
+  readonly culturalSimilarity: readonly GroupSimilarityDetails[];
+}
+
+/** Derived cultural profile of one group (see culture/group-culture.ts). */
+export interface GroupCultureDetails {
+  readonly carriers: number;
+  readonly entries: number;
+  readonly distinctItems: number;
+  readonly averageStrength: number;
+  /** Normalized Shannon entropy of the item distribution, in [0, 1]. */
+  readonly diversity: number;
+  /** Most widespread items (bounded, human-labelled). */
+  readonly dominantKnowledge: readonly GroupKnowledgeDetails[];
+  /** Items held by at least `traditionShare` of the members (bounded). */
+  readonly traditions: readonly GroupKnowledgeDetails[];
+  /** Learned signal conventions (bounded, human-labelled). */
+  readonly signals: readonly GroupSignalDetails[];
+  readonly signalCarriers: number;
+  readonly normCarriers: number;
+}
+
+/** One knowledge row in the group inspector. */
+export interface GroupKnowledgeDetails {
+  readonly label: string;
+  readonly type: string;
+  readonly carriers: number;
+  readonly share: number;
+  readonly averageStrength: number;
+}
+
+/** One signal convention row in the group inspector. */
+export interface GroupSignalDetails {
+  readonly label: string;
+  readonly token: string;
+  readonly meaning: string;
+  readonly carriers: number;
+  readonly share: number;
+  readonly strength: number;
+}
+
+/** Cultural similarity of one group to another, in [0, 1]. */
+export interface GroupSimilarityDetails {
+  readonly groupId: number;
+  readonly similarity: number;
 }
 
 /** One intra-group relationship row in the group inspector. */
@@ -316,6 +498,9 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   const lineage = sim.ecs.lineage;
   const socialStore = sim.ecs.social;
   const relationships = sim.ecs.relationships;
+  const cultureStore = sim.ecs.culture;
+  const culturalMemory = sim.ecs.culturalMemory;
+  const signalStore = sim.ecs.signals;
   const count = position.count;
 
   const ids = new Uint32Array(count);
@@ -328,6 +513,8 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   const groupId = new Int32Array(count);
   const cooperationTarget = new Int32Array(count);
   const conflictFlash = new Uint8Array(count);
+  const signalToken = new Uint8Array(count);
+  const signalRecent = new Uint8Array(count);
 
   const distIntelligence = emptyDistribution();
   const distStrength = emptyDistribution();
@@ -400,6 +587,17 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
       cooperationTarget[i] = -1;
       isolatedAgents++;
     }
+    // Cultural columns: cooldowns/alerts live on the agent, the knowledge and
+    // associations live in the bounded stores.
+    signalToken[i] = NO_SIGNAL_TOKEN;
+    const cultureSlot = cultureStore.index[entity];
+    if (cultureSlot >= 0) {
+      const lastTicket = cultureStore.columns.lastSignalTick[cultureSlot];
+      const lastToken = cultureStore.columns.lastSignalToken[cultureSlot];
+      signalToken[i] = lastToken;
+      signalRecent[i] =
+        lastToken !== NO_SIGNAL_TOKEN && lastTicket > 0 && sim.tick - lastTicket < SIGNAL_FLASH_TICKS ? 1 : 0;
+    }
   }
 
   const averages: SimulationAverages =
@@ -455,6 +653,56 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
       trustSum += relationships.trustOf(e);
     }
   }
+  // Cultural statistics: cumulative counters plus cheap live aggregates.
+  // The richer derived culture (diversity, traditions, similarity) is built on
+  // demand by the inspectors, never per frame.
+  let knowledgeItems = 0;
+  let knowledgeHolders = 0;
+  let normCarriers = 0;
+  for (let k = 0; k < aliveCount; k++) {
+    const entity = aliveIds[k];
+    const held = culturalMemory.countFor(entity);
+    if (held === 0) continue;
+    knowledgeHolders++;
+    knowledgeItems += held;
+    if (culturalMemory.bestStrengthOfType(entity, KnowledgeType.SocialNorm) > 0) normCarriers++;
+  }
+  let associations = 0;
+  let associationHolders = 0;
+  let signalCarriers = 0;
+  const knownThreshold = sim.config.culture.signals.knownThreshold;
+  for (let k = 0; k < aliveCount; k++) {
+    const entity = aliveIds[k];
+    const held = signalStore.countFor(entity);
+    if (held === 0) continue;
+    associationHolders++;
+    associations += held;
+    for (let e = signalStore.headOf(entity); e !== -1; e = signalStore.nextOf(e)) {
+      if (signalStore.entryStrength(e) >= knownThreshold) {
+        signalCarriers++;
+        break;
+      }
+    }
+  }
+  const culture: CultureSnapshotStats = {
+    discoveries: sim.cultureStats.discoveries,
+    taught: sim.cultureStats.taught,
+    learned: sim.cultureStats.learned,
+    lost: sim.cultureStats.lost,
+    variants: sim.cultureStats.variants,
+    normsLearned: sim.cultureStats.normsLearned,
+    signalsEmitted: sim.cultureStats.signalsEmitted,
+    signalsHeard: sim.cultureStats.signalsHeard,
+    signalLearnings: sim.cultureStats.signalLearnings,
+    knowledgeItems,
+    knowledgeHolders,
+    averageKnowledgePerHolder: knowledgeHolders === 0 ? 0 : knowledgeItems / knowledgeHolders,
+    associations,
+    associationHolders,
+    normCarriers,
+    signalCarriers,
+  };
+
   const social: SocialSnapshotStats = {
     activeRelationships: relationshipCount,
     averageRelationshipScore: relationshipCount === 0 ? 0 : scoreSum / relationshipCount,
@@ -481,17 +729,31 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   const listed = [...allGroups]
     .sort((a, b) => b.members.length - a.members.length || a.id - b.id)
     .slice(0, MAX_GROUPS_IN_SNAPSHOT)
-    .map((group) => ({
-      id: group.id,
-      memberCount: group.members.length,
-      centerX: group.centerX,
-      centerY: group.centerY,
-      radius: group.radius,
-      cohesion: group.cohesion,
-      createdTick: group.createdTick,
-      parentId: group.parentId,
-      generation: group.generation,
-    }));
+    .map((group) => {
+      // Per-group culture HEADLINE: the single most widespread item and the
+      // carrier count. Bounded (tracked keys are few) and allocation-light, so
+      // it is safe to include for the listed groups every frame; the full
+      // profile is only built when the group inspector asks for it.
+      const headline = groupCultureHeadline(
+        culturalMemory,
+        group.members,
+        sim.config.culture.memory.knownThreshold,
+      );
+      return {
+        id: group.id,
+        memberCount: group.members.length,
+        centerX: group.centerX,
+        centerY: group.centerY,
+        radius: group.radius,
+        cohesion: group.cohesion,
+        createdTick: group.createdTick,
+        parentId: group.parentId,
+        generation: group.generation,
+        cultureDominant: headline.label,
+        cultureDominantShare: headline.share,
+        cultureCarriers: headline.carriers,
+      };
+    });
   const groups: GroupsSnapshot = {
     count: allGroups.length,
     largestSize,
@@ -519,9 +781,90 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
       speed: distSpeed,
       fertility: distFertility,
     },
-    agents: { ids, x, y, strength, intelligence, speed, intentKind, groupId, cooperationTarget, conflictFlash },
+    agents: {
+      ids,
+      x,
+      y,
+      strength,
+      intelligence,
+      speed,
+      intentKind,
+      groupId,
+      cooperationTarget,
+      conflictFlash,
+      signalToken,
+      signalRecent,
+    },
     social,
+    culture,
     groups,
+  };
+}
+
+/**
+ * Most widespread known item inside one group, computed with bounded scratch
+ * (no maps, no sorting): a few tracked item slots compete by carrier count.
+ * Returns `{ label: 'none', share: 0, carriers: 0 }` when nobody in the group
+ * holds anything — a group does not "have" a culture until its members
+ * actually know something.
+ */
+function groupCultureHeadline(
+  culturalMemory: Simulation['ecs']['culturalMemory'],
+  members: readonly EntityId[],
+  knownThreshold: number,
+): { label: string; share: number; carriers: number } {
+  const tracked = GROUP_CULTURE_TRACKED_ITEMS;
+  const key: number[] = new Array<number>(tracked).fill(-1);
+  const type: number[] = new Array<number>(tracked).fill(-1);
+  const tileX: number[] = new Array<number>(tracked).fill(0);
+  const tileY: number[] = new Array<number>(tracked).fill(0);
+  const variant: number[] = new Array<number>(tracked).fill(0);
+  const counts: number[] = new Array<number>(tracked).fill(0);
+  let carriers = 0;
+
+  for (const member of members) {
+    let holds = false;
+    for (let e = culturalMemory.headOf(member); e !== -1; e = culturalMemory.nextOf(e)) {
+      if (culturalMemory.entryStrength(e) < knownThreshold) continue;
+      holds = true;
+      const itemKey = culturalMemory.entryKey(e);
+      let slot = -1;
+      for (let k = 0; k < tracked; k++) {
+        if (key[k] === itemKey) {
+          slot = k;
+          break;
+        }
+        if (slot === -1 && counts[k] === 0) slot = k;
+      }
+      if (slot === -1) {
+        // Every tracked slot holds a different, already-counted item: replace
+        // the weakest incumbent (deterministic, keeps the top items).
+        let weakest = 0;
+        for (let k = 1; k < tracked; k++) if (counts[k] < counts[weakest]) weakest = k;
+        if (counts[weakest] > 1) continue;
+        slot = weakest;
+        counts[slot] = 0;
+      }
+      if (key[slot] !== itemKey) {
+        key[slot] = itemKey;
+        type[slot] = culturalMemory.entryType(e);
+        tileX[slot] = culturalMemory.entryTileX(e);
+        tileY[slot] = culturalMemory.entryTileY(e);
+        variant[slot] = culturalMemory.entryVariant(e);
+        counts[slot] = 0;
+      }
+      counts[slot]++;
+    }
+    if (holds) carriers++;
+  }
+
+  let best = 0;
+  for (let k = 1; k < tracked; k++) if (counts[k] > counts[best]) best = k;
+  if (counts[best] <= 0) return { label: 'none', share: 0, carriers: 0 };
+  return {
+    label: describeKnowledge(type[best], tileX[best], tileY[best], variant[best]),
+    share: members.length === 0 ? 0 : counts[best] / members.length,
+    carriers,
   };
 }
 
@@ -580,6 +923,57 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
     if (ecs.memory.entryResourceType(e) === ResourceType.Food) memoryFood.push(entry);
     else memoryWater.push(entry);
   }
+
+  // --- Phase 5: cultural inspection (bounded by the store capacities) ------
+  const culturalMemory = ecs.culturalMemory;
+  const knownThreshold = sim.config.culture.signals.knownThreshold;
+  const culturalKnowledge: AgentKnowledgeDetails[] = [];
+  for (let e = culturalMemory.headOf(entityId); e !== -1; e = culturalMemory.nextOf(e)) {
+    const itemType = culturalMemory.entryType(e);
+    const itemX = culturalMemory.entryTileX(e);
+    const itemY = culturalMemory.entryTileY(e);
+    const itemVariant = culturalMemory.entryVariant(e);
+    culturalKnowledge.push({
+      type: knowledgeTypeName(itemType),
+      label: describeKnowledge(itemType, itemX, itemY, itemVariant),
+      strength: culturalMemory.entryStrength(e),
+      origin: knowledgeOriginName(culturalMemory.entryOrigin(e)),
+      sourceEntity: culturalMemory.entrySource(e),
+      learnedTick: culturalMemory.entryLearnedTick(e),
+      lastReinforcedTick: culturalMemory.entryLastReinforcedTick(e),
+      reinforceCount: culturalMemory.entryReinforceCount(e),
+    });
+  }
+  culturalKnowledge.sort((a, b) => b.strength - a.strength || a.label.localeCompare(b.label));
+
+  const signalStore = ecs.signals;
+  const signalAssociations: AgentSignalDetails[] = [];
+  for (let e = signalStore.headOf(entityId); e !== -1; e = signalStore.nextOf(e)) {
+    const token = signalStore.entryToken(e);
+    const meaning = signalStore.entryMeaning(e);
+    signalAssociations.push({
+      token: signalTokenName(token),
+      meaning: signalMeaningName(meaning),
+      strength: signalStore.entryStrength(e),
+      exposures: signalStore.entryExposures(e),
+      lastUpdateTick: signalStore.entryLastUpdateTick(e),
+      known: signalStore.entryStrength(e) >= knownThreshold,
+    });
+  }
+  signalAssociations.sort((a, b) => b.strength - a.strength || a.token.localeCompare(b.token));
+
+  const normStrengths: AgentNormDetail[] = [NormId.HelpOthers, NormId.ShareFood, NormId.AvoidConflict].map(
+    (norm) => ({
+      norm: normName(norm),
+      strength: culturalMemory.bestStrengthOfType(entityId, KnowledgeType.SocialNorm) > 0
+        ? normStrengthOf(culturalMemory, entityId, norm)
+        : 0,
+    }),
+  );
+
+  const cultureSlot = ecs.culture.index[entityId];
+  const lastSignalToken = cultureSlot >= 0 ? ecs.culture.columns.lastSignalToken[cultureSlot] : NO_SIGNAL_TOKEN;
+  const lastSignalTick = cultureSlot >= 0 ? ecs.culture.columns.lastSignalTick[cultureSlot] : 0;
 
   const aiUtilities: AiUtilityEntry[] =
     aiSlot >= 0
@@ -679,7 +1073,36 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
     cooperationDuration: sim.config.social.cooperation.durationTicks,
     forageBonusActive: ecs.social.columns.forageBonusTicks[socialSlot] > 0,
     relationships: topRelationships,
+    culturalKnowledge,
+    signalAssociations,
+    normStrengths,
+    knowledgeItemCount: culturalMemory.countFor(entityId),
+    signalAssociationCount: signalStore.countFor(entityId),
+    signalCooldownTicks: cultureSlot >= 0 ? ecs.culture.columns.signalCooldownTicks[cultureSlot] : 0,
+    teachCooldownTicks: cultureSlot >= 0 ? ecs.culture.columns.teachCooldownTicks[cultureSlot] : 0,
+    alertTicks: cultureSlot >= 0 ? ecs.culture.columns.alertTicks[cultureSlot] : 0,
+    lastSignal:
+      lastSignalToken === NO_SIGNAL_TOKEN
+        ? 'none'
+        : `${signalTokenName(lastSignalToken)} (tick ${lastSignalTick})`,
+    lastSignalTick,
   };
+}
+
+/** Strength of one norm for an agent (0 when it holds none of that norm). */
+function normStrengthOf(
+  culturalMemory: Simulation['ecs']['culturalMemory'],
+  entity: EntityId,
+  norm: number,
+): number {
+  let best = 0;
+  for (let e = culturalMemory.headOf(entity); e !== -1; e = culturalMemory.nextOf(e)) {
+    if (culturalMemory.entryType(e) !== KnowledgeType.SocialNorm) continue;
+    if (culturalMemory.entryVariant(e) !== norm) continue;
+    const strength = culturalMemory.entryStrength(e);
+    if (strength > best) best = strength;
+  }
+  return best;
 }
 
 /** Extract full details for one group, or null if it does not exist. */
@@ -741,6 +1164,62 @@ export function buildGroupDetails(sim: Simulation, groupId: number): GroupDetail
     }
   }
 
+  // --- Phase 5: the group's cultural profile, derived on demand -----------
+  const summary = summarizeCulture(
+    ecs.culturalMemory,
+    ecs.signals,
+    group.members,
+    group.members.length,
+    sim.config,
+  );
+  const culture: GroupCultureDetails = {
+    carriers: summary.carriers,
+    entries: summary.entries,
+    distinctItems: summary.knowledgeItems,
+    averageStrength: summary.averageStrength,
+    diversity: summary.diversity,
+    dominantKnowledge: summary.items.slice(0, sim.config.culture.summary.maxItems).map((item) => ({
+      label: describeKnowledge(item.type, item.tileX, item.tileY, item.variantId),
+      type: knowledgeTypeName(item.type),
+      carriers: item.carriers,
+      share: item.share,
+      averageStrength: item.averageStrength,
+    })),
+    traditions: summary.traditions.slice(0, sim.config.culture.summary.maxTraditions).map((item) => ({
+      label: describeKnowledge(item.type, item.tileX, item.tileY, item.variantId),
+      type: knowledgeTypeName(item.type),
+      carriers: item.carriers,
+      share: item.share,
+      averageStrength: item.averageStrength,
+    })),
+    signals: summary.signals.slice(0, sim.config.culture.summary.maxSignals).map((convention) => ({
+      label: describeAssociation(convention.token, convention.meaning),
+      token: signalTokenName(convention.token),
+      meaning: signalMeaningName(convention.meaning),
+      carriers: convention.carriers,
+      share: convention.share,
+      strength: convention.strength,
+    })),
+    signalCarriers: summary.signalCarriers,
+    normCarriers: summary.normCarriers,
+  };
+
+  // Cultural similarity to the other listed groups (bounded by config).
+  const similarityLimit = Math.max(0, sim.config.culture.summary.maxSimilarityGroups);
+  const others = sim.groups.groups
+    .filter((other) => other.id !== groupId)
+    .sort((a, b) => b.members.length - a.members.length || a.id - b.id)
+    .slice(0, similarityLimit);
+  const culturalSimilarityList: GroupSimilarityDetails[] = others.map((other) => ({
+    groupId: other.id,
+    similarity: culturalSimilarity(
+      summary,
+      summarizeCulture(ecs.culturalMemory, ecs.signals, other.members, other.members.length, sim.config),
+      sim.config,
+    ),
+  }));
+  culturalSimilarityList.sort((a, b) => b.similarity - a.similarity || a.groupId - b.groupId);
+
   return {
     id: group.id,
     memberCount: group.members.length,
@@ -758,5 +1237,7 @@ export function buildGroupDetails(sim: Simulation, groupId: number): GroupDetail
     averageTraits,
     topRelationships,
     recentEvents,
+    culture,
+    culturalSimilarity: culturalSimilarityList,
   };
 }

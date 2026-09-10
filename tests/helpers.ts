@@ -7,7 +7,7 @@
  * single fully-formed agent to it.
  */
 
-import { SimulationEcs } from '../src/simulation-core/ecs';
+import { NO_FORAGE_TICK, SimulationEcs } from '../src/simulation-core/ecs';
 import type { EntityId } from '../src/simulation-core/ecs';
 import { createWorld } from '../src/simulation-core/world';
 import type { World } from '../src/simulation-core/world';
@@ -16,6 +16,7 @@ import { EventLog } from '../src/simulation-core/events';
 import { ResourceIndex, AgentIndex } from '../src/simulation-core/ai/perception';
 import { AgentIntent } from '../src/simulation-core/ai/intents';
 import { GroupRegistry, createSocialStats } from '../src/simulation-core/social';
+import { createCultureStats, NO_SIGNAL_TOKEN } from '../src/simulation-core/culture';
 import { cloneConfig, DEFAULT_SIMULATION_CONFIG } from '../src/simulation-core/simulation/config';
 import type { SimulationConfig } from '../src/simulation-core/simulation/config';
 import type { TickContext } from '../src/simulation-core/simulation/tick-context';
@@ -34,7 +35,13 @@ export function makeContext(seed = 1, worldSize = 24): MiniContext {
   config.world.width = worldSize;
   config.world.height = worldSize;
   const world = createWorld(seed, config.world);
-  const ecs = new SimulationEcs(config.memory.capacity, config.social.memory.capacity);
+  const ecs = new SimulationEcs(
+    config.memory.capacity,
+    config.social.memory.capacity,
+    config.culture.memory.capacity,
+    config.culture.signals.maxAssociationsPerAgent,
+    config.culture.signals.maxMeaningsPerToken,
+  );
   const events = new EventLog(() => ({ tick: 0, timeHours: 0 }));
   const groups = new GroupRegistry();
   const ctx: TickContext = {
@@ -45,11 +52,13 @@ export function makeContext(seed = 1, worldSize = 24): MiniContext {
     rng: Rng.fromSeed(seed),
     aiRng: Rng.fromSeed(seed + 1),
     reproRng: Rng.fromSeed(seed + 2),
+    cultureRng: Rng.fromSeed(seed + 3),
     resourceIndex: new ResourceIndex(world.width, world.height, config.ai.perceptionRadiusTiles),
     agentIndex: new AgentIndex(world.width, world.height, config.reproduction.partnerSeekRadiusTiles),
     socialIndex: new AgentIndex(world.width, world.height, config.social.perception.radiusTiles),
     groups,
     socialStats: createSocialStats(),
+    cultureStats: createCultureStats(),
     dtHours: config.time.hoursPerTick,
     tick: 0,
   };
@@ -86,6 +95,13 @@ export interface AgentFixture {
   cooperationTicks?: number;
   forageBonusTicks?: number;
   lastConflictTick?: number;
+  // Culture defaults: nothing known, no cooldowns, never signalled/foraged.
+  signalCooldownTicks?: number;
+  teachCooldownTicks?: number;
+  alertTicks?: number;
+  lastSignalToken?: number;
+  lastSignalTick?: number;
+  lastForageTick?: number;
 }
 
 export function spawnAgent(
@@ -136,6 +152,15 @@ export function spawnAgent(
     cooperationTicks: fixture.cooperationTicks ?? 0,
     forageBonusTicks: fixture.forageBonusTicks ?? 0,
     lastConflictTick: fixture.lastConflictTick ?? 0,
+  });
+  // Culture state: attached but empty unless the test attaches knowledge.
+  ecs.culture.attach(entity, {
+    signalCooldownTicks: fixture.signalCooldownTicks ?? 0,
+    teachCooldownTicks: fixture.teachCooldownTicks ?? 0,
+    alertTicks: fixture.alertTicks ?? 0,
+    lastSignalToken: fixture.lastSignalToken ?? NO_SIGNAL_TOKEN,
+    lastSignalTick: fixture.lastSignalTick ?? 0,
+    lastForageTick: fixture.lastForageTick ?? NO_FORAGE_TICK,
   });
   return entity;
 }

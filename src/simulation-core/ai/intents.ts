@@ -45,12 +45,27 @@ export const AgentIntent = {
   Avoid: 10,
   /** Contest resources with a hostile nearby agent (Phase 4 conflict). */
   Confront: 11,
+  /**
+   * Deliberately teach a nearby agent something the teacher knows (Phase 5).
+   * A movement intent: the teacher travels to the learner, then spends time
+   * (energy + a cooldown) on the attempt. Transmission is probabilistic — see
+   * culture/learning.ts.
+   */
+  Teach: 12,
+  /** Warn nearby agents about a threat (Phase 5 proto-communication). */
+  SignalDanger: 13,
+  /** Announce food at the agent's location (Phase 5 proto-communication). */
+  SignalFood: 14,
+  /** Announce water at the agent's location (Phase 5 proto-communication). */
+  SignalWater: 15,
+  /** Invite nearby agents along toward a resource (Phase 5 proto-communication). */
+  SignalFollow: 16,
 } as const;
 
 export type AgentIntent = (typeof AgentIntent)[keyof typeof AgentIntent];
 
 /** Number of distinct intents (kept explicit so callers can pre-size buffers). */
-export const INTENT_COUNT = 12;
+export const INTENT_COUNT = 17;
 
 const NAMES: readonly string[] = [
   'rest',
@@ -65,6 +80,11 @@ const NAMES: readonly string[] = [
   'cooperate',
   'avoid',
   'confront',
+  'teach',
+  'signal-danger',
+  'signal-food',
+  'signal-water',
+  'signal-follow',
 ];
 
 /** Human-readable name for an intent kind (used in the agent inspector UI). */
@@ -87,6 +107,7 @@ export function isMovementIntent(kind: number): boolean {
     kind === AgentIntent.Help ||
     kind === AgentIntent.Cooperate ||
     kind === AgentIntent.Avoid ||
-    kind === AgentIntent.Confront
+    kind === AgentIntent.Confront ||
+    kind === AgentIntent.Teach
   );
 }

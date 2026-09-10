@@ -18,6 +18,7 @@ import type { SimulationConfig } from './config';
 import type { ResourceIndex, AgentIndex } from '../ai/perception';
 import type { EventLog } from '../events';
 import type { GroupRegistry, SocialStats } from '../social';
+import type { CultureStats } from '../culture';
 
 export interface TickContext {
   readonly ecs: SimulationEcs;
@@ -30,6 +31,12 @@ export interface TickContext {
   readonly aiRng: Rng;
   /** Dedicated RNG stream for reproduction (sex, crossover, mutation, births). */
   readonly reproRng: Rng;
+  /**
+   * Dedicated RNG stream for the cultural layer (Phase 5): transmission rolls,
+   * drift/variant offsets, signal invention and misperception. Keeping it
+   * separate means culture never shifts the sim/spawn/ai/repro streams.
+   */
+  readonly cultureRng: Rng;
   /** World-grid spatial lookup rebuilt each tick (see ai/perception). */
   readonly resourceIndex: ResourceIndex;
   /** World-grid spatial lookup for agents rebuilt each tick (partner search). */
@@ -40,6 +47,8 @@ export interface TickContext {
   readonly groups: GroupRegistry;
   /** Cumulative social counters (Phase 4). */
   readonly socialStats: SocialStats;
+  /** Cumulative cultural counters (Phase 5). */
+  readonly cultureStats: CultureStats;
   /** In-game hours advanced by one tick (= config.time.hoursPerTick). */
   readonly dtHours: number;
   /** Tick currently being processed (updated at the start of every step). */

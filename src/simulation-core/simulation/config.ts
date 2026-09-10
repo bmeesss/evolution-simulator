@@ -410,6 +410,184 @@ export interface SocialConfig {
   };
 }
 
+/**
+ * Culture & communication (Phase 5). Every knob of the cultural layer lives
+ * here: bounded cultural memory, transmission (deliberate teaching + passive
+ * imitation), discovery (where a tradition comes from before anyone teaches
+ * it), proto-communication (signal tokens and their learned associations) and
+ * the bounded behavioural multipliers culture feeds back into the Utility AI.
+ *
+ * Nothing here assigns a culture to anyone: the configuration only sets
+ * rates/limits, and every actual item, association and tradition emerges from
+ * interaction.
+ */
+export interface CultureConfig {
+  /** Bounded cultural memory: how much one individual can know. */
+  memory: {
+    /** Maximum cultural items per agent (hard bound; the weakest is evicted). */
+    capacity: number;
+    /** Strength a newly discovered/learned item starts at. */
+    initialStrength: number;
+    /** Fraction a successful use/teaching moves strength toward 1. */
+    baseLearningRate: number;
+    /** Base forgetting rate per in-game hour for unused knowledge. */
+    baseDecayPerHour: number;
+    /** Items whose strength falls below this are forgotten. */
+    forgetThreshold: number;
+    /** Strength at which an item counts as known (statistics/inspector). */
+    knownThreshold: number;
+    /** Contradictory experience (a known location that is empty) erodes by this. */
+    contradictionRate: number;
+    /** Extra learning-rate multiplier at intelligence 1. */
+    intelligenceLearningFactor: number;
+    /** Fraction of the decay removed at intelligence 1 (better retention). */
+    intelligenceRetentionFactor: number;
+  };
+  /** Deliberate teaching and observation-driven imitation. */
+  transmission: {
+    /** Baseline chance that one Teach interaction transfers an item. */
+    teachChance: number;
+    /** Baseline chance that one social interaction transfers an item by imitation. */
+    imitateChance: number;
+    /** Probability that a transmission copies the item exactly (else a variant). */
+    fidelity: number;
+    /** Confidence a learner receives, as a fraction of the source's strength. */
+    learnedStrengthFactor: number;
+    /** Maximum tile offset a location variant may drift by. */
+    locationJitterTiles: number;
+    /** Energy the teacher pays per attempt (successful or not). */
+    teachEnergyCost: number;
+    /** A teacher must keep at least this energy / health. */
+    minTeacherEnergy: number;
+    minTeacherHealth: number;
+    /** Ticks before the same agent teaches again (time is a real cost). */
+    cooldownTicks: number;
+    /** Influence weights of the transmission-chance formula (see culture/learning). */
+    relationshipWeight: number;
+    familiarityWeight: number;
+    intelligenceBonus: number;
+    socialTendencyWeight: number;
+    strengthWeight: number;
+  };
+  /** Where cultural items come from before anyone teaches them. */
+  discovery: {
+    /** Chance per successful forage of forming a location item. */
+    locationChancePerForage: number;
+    /** Chance per successful forage of working out a technique variant. */
+    techniqueChancePerForage: number;
+    /** Chance per tick of the matching activity to internalize a norm. */
+    normChancePerTick: number;
+    /** Probability that a newly invented technique suits the local terrain. */
+    habitatMatchChance: number;
+    /** Discovery-chance intelligence factor: chance *= floor + intelligence. */
+    intelligenceFloor: number;
+    /**
+     * Confront utility above which the agent genuinely wanted to fight. Choosing
+     * not to is what makes a restraint norm credible (and discoverable).
+     */
+    avoidConflictUrgeThreshold: number;
+  };
+  /** Proto-communication: signal tokens with learned, local meanings. */
+  signals: {
+    /**
+     * Radius (tiles) within which a signal can be heard. Must not exceed
+     * `social.perception.radiusTiles`: the listener search reuses the social
+     * spatial index, whose 3×3-cell walk is only guaranteed to cover that
+     * radius (asserted by a config test).
+     */
+    hearingRadiusTiles: number;
+    /** Upper bound on listeners examined per emission (anti-quadratic guard). */
+    maxListenersPerEmission: number;
+    /** Upper bound on signals one listener processes per tick (attention). */
+    maxObservationsPerTick: number;
+    /** Energy one emission costs (communication is never free). */
+    emissionEnergyCost: number;
+    /** Ticks before the same agent emits again (spam prevention). */
+    emissionCooldownTicks: number;
+    /** An emitter must keep at least this energy. */
+    minEnergyToEmit: number;
+    /** Association update rate per observation. */
+    learningRate: number;
+    /** Association decay per in-game hour. */
+    baseDecayPerHour: number;
+    /** Associations whose strength falls below this are forgotten. */
+    forgetThreshold: number;
+    /** Strength at which an association counts as knowing the meaning. */
+    knownThreshold: number;
+    /** How fast a token's competing meanings decay when one is observed. */
+    competitionDecay: number;
+    /** Probability that a listener misattributes a token to a neighbouring one. */
+    misperceptionChance: number;
+    /** Extra learning-rate multiplier at intelligence 1. */
+    intelligenceLearningFactor: number;
+    /** Fraction of the decay removed at intelligence 1. */
+    intelligenceRetentionFactor: number;
+    /** Maximum meanings tracked per token (per agent). */
+    maxMeaningsPerToken: number;
+    /** Maximum associations tracked per agent. */
+    maxAssociationsPerAgent: number;
+    /** Ticks of heightened wariness granted by hearing a DANGER signal it knows. */
+    alertTicks: number;
+    /**
+     * How long (ticks) a recent conflict keeps counting as "danger here" when
+     * an observer grounds the meaning of a danger signal. Long enough to be
+     * visible to bystanders, short enough that old fights are not re-signalled.
+     */
+    dangerContextTicks: number;
+    /** Base Utility-AI drives of the signalling/teaching actions. */
+    drive: {
+      teach: number;
+      danger: number;
+      food: number;
+      water: number;
+      follow: number;
+    };
+    /** Nearby agents that count as a full "someone is listening" audience. */
+    audienceForFullUtility: number;
+  };
+  /** How cultural knowledge changes behaviour (all bounded multipliers). */
+  behavior: {
+    /** Help utility multiplier boost at HelpOthers strength 1. */
+    normHelpBoost: number;
+    /** Cooperate utility multiplier boost at ShareFood strength 1. */
+    normShareBoost: number;
+    /** Confront utility reduction at AvoidConflict strength 1 (marginal fights). */
+    normAvoidDampening: number;
+    /**
+     * Confront utility at which the AVOID_CONFLICT norm stops damping: norms
+     * restrain marginal fights, never desperate ones.
+     */
+    normAvoidSpan: number;
+    /** Value equivalent of a believed resource location at knowledge strength 1. */
+    knownLocationValue: number;
+    /** Foraging-relief bonus at technique strength 1 on the technique's terrain. */
+    techniqueEfficiencyBonus: number;
+    /** Foraging-relief factor a technique gives on foreign terrain. */
+    foreignHabitatFactor: number;
+    /** Avoid utility multiplier boost while alerted by a danger signal. */
+    alertBoost: number;
+  };
+  /** Derived cultural summaries and the similarity metric (reporting only). */
+  summary: {
+    /** Share of a group's members holding an item for it to be a "tradition". */
+    traditionShare: number;
+    /** Most widespread items listed per summary. */
+    maxItems: number;
+    /** Traditions listed per summary. */
+    maxTraditions: number;
+    /** Signal conventions listed per summary. */
+    maxSignals: number;
+    /** Weight of the knowledge term in cultural similarity. */
+    knowledgeWeight: number;
+    /** Weight of the signal term in cultural similarity. */
+    signalWeight: number;
+    /** Groups compared pairwise for the global similarity statistic. */
+    maxSimilarityGroups: number;
+    /** Cultural events listed in the group inspector. */
+    maxReportedEvents: number;
+  };
+}
+
 export interface SimulationConfig {
   time: TimeConfig;
   world: WorldDimensions;
@@ -425,6 +603,7 @@ export interface SimulationConfig {
   metabolism: MetabolismConfig;
   mutation: MutationConfig;
   social: SocialConfig;
+  culture: CultureConfig;
 }
 
 /**
@@ -576,6 +755,113 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = deepFreeze({
   mutation: {
     perGeneProbability: 0.08,
     magnitude: 0.08,
+  },
+  culture: {
+    memory: {
+      // Ten items per agent: a handful of places plus a technique or two and a
+      // norm is a believable "personal culture", and the bound keeps cultural
+      // memory O(agents × capacity) forever.
+      capacity: 10,
+      initialStrength: 0.45,
+      baseLearningRate: 0.25,
+      // 0.8% per in-game hour: unused knowledge fades below the forget
+      // threshold (0.06) in roughly ten in-game days — traditions survive by
+      // being used and re-taught, never by sitting in a store forever.
+      baseDecayPerHour: 0.008,
+      forgetThreshold: 0.06,
+      knownThreshold: 0.35,
+      contradictionRate: 0.3,
+      intelligenceLearningFactor: 0.5,
+      intelligenceRetentionFactor: 0.5,
+    },
+    transmission: {
+      // Deliberate teaching usually works; observation only occasionally does.
+      teachChance: 0.3,
+      imitateChance: 0.03,
+      // 15% of successful transmissions produce a slightly altered variant —
+      // that is cultural drift, and it is the only source of cultural variation
+      // besides independent discovery.
+      fidelity: 0.85,
+      // A freshly taught item starts at 80% of the teacher's confidence: you
+      // never quite believe something as firmly as the person who told you.
+      learnedStrengthFactor: 0.8,
+      locationJitterTiles: 2,
+      teachEnergyCost: 3,
+      minTeacherEnergy: 25,
+      minTeacherHealth: 40,
+      // Six in-game hours between teachings by the same agent.
+      cooldownTicks: 24,
+      // Formula weights (see culture/learning.ts): no single factor dominates.
+      relationshipWeight: 0.5,
+      familiarityWeight: 0.6,
+      intelligenceBonus: 0.6,
+      socialTendencyWeight: 0.4,
+      strengthWeight: 0.5,
+    },
+    discovery: {
+      locationChancePerForage: 0.01,
+      techniqueChancePerForage: 0.003,
+      normChancePerTick: 0.004,
+      habitatMatchChance: 0.7,
+      // Discovery scales with intelligence but never requires it: even a dull
+      // agent occasionally notices where the food was.
+      intelligenceFloor: 0.4,
+      avoidConflictUrgeThreshold: 0.25,
+    },
+    signals: {
+      hearingRadiusTiles: 6,
+      maxListenersPerEmission: 24,
+      maxObservationsPerTick: 3,
+      emissionEnergyCost: 1.5,
+      // Half an in-game day between emissions per agent: signalling is an
+      // occasional act, not a broadcast loop.
+      emissionCooldownTicks: 48,
+      minEnergyToEmit: 25,
+      learningRate: 0.22,
+      baseDecayPerHour: 0.01,
+      forgetThreshold: 0.05,
+      knownThreshold: 0.4,
+      competitionDecay: 0.15,
+      misperceptionChance: 0.03,
+      intelligenceLearningFactor: 0.6,
+      intelligenceRetentionFactor: 0.4,
+      maxMeaningsPerToken: 2,
+      maxAssociationsPerAgent: 8,
+      alertTicks: 24,
+      dangerContextTicks: 48,
+      // Baseline motivation for each Phase 5 action (teaching + the four
+      // signals). These are utilities, not probabilities: they are multiplied
+      // by context factors (readiness, audience, grounding) and then compete
+      // with every other action exactly like the Phase 1–4 utilities do.
+      drive: {
+        teach: 1.2,
+        danger: 0.55,
+        food: 0.35,
+        water: 0.35,
+        follow: 0.25,
+      },
+      audienceForFullUtility: 2,
+    },
+    behavior: {
+      normHelpBoost: 0.6,
+      normShareBoost: 0.5,
+      normAvoidDampening: 0.6,
+      normAvoidSpan: 0.35,
+      knownLocationValue: 0.7,
+      techniqueEfficiencyBonus: 0.35,
+      foreignHabitatFactor: 0.35,
+      alertBoost: 0.5,
+    },
+    summary: {
+      traditionShare: 0.5,
+      maxItems: 4,
+      maxTraditions: 3,
+      maxSignals: 3,
+      knowledgeWeight: 0.6,
+      signalWeight: 0.4,
+      maxSimilarityGroups: 24,
+      maxReportedEvents: 8,
+    },
   },
   social: {
     memory: {

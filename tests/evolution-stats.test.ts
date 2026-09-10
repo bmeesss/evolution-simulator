@@ -5,6 +5,7 @@ import {
   buildSimulationSnapshot,
   buildAgentDetails,
   TRAIT_DISTRIBUTION_BINS,
+  SNAPSHOT_FORMAT_VERSION,
 } from '../src/persistence/snapshots';
 
 const TEST_SEED = 1337;
@@ -16,7 +17,7 @@ describe('evolution statistics (snapshot)', () => {
     const sim = Simulation.create(TEST_SEED, config);
     for (let i = 0; i < 1500; i++) sim.step();
     const snap = buildSimulationSnapshot(sim);
-    expect(snap.formatVersion).toBe(4);
+    expect(snap.formatVersion).toBe(SNAPSHOT_FORMAT_VERSION);
     expect(snap.births).toBe(sim.birthCount);
     expect(snap.reproductionSuccesses).toBe(sim.birthCount);
     expect(snap.deaths).toBe(sim.deathCount);
