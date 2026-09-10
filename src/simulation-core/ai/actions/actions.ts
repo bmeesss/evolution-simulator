@@ -20,4 +20,12 @@ export type ActionKind = AgentIntent;
 export const ACTION_COUNT = INTENT_COUNT;
 
 /** Display names, aligned with `ActionKind` order (used by the AI debug view). */
-export const ACTION_NAMES: readonly string[] = ['Rest', 'Wander', 'SeekFood', 'SeekWater', 'Eat', 'Drink'];
+export const ACTION_NAMES: readonly string[] = [
+  'Rest',
+  'Wander',
+  'SeekFood',
+  'SeekWater',
+  'Eat',
+  'Drink',
+  'SeekPartner',
+];

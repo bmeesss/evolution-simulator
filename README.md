@@ -4,29 +4,39 @@ A browser-based evolution simulator: a **deterministic** agent simulation runnin
 on a fixed timestep inside a **Web Worker**, rendered with **Canvas 2D** — no
 game engine, no backend, no simulation framework.
 
-This repository currently contains **Phase 1 (the deterministic foundation) and
-Phase 2 (Utility AI, survival and individual learning)**. The world, agents,
-needs, movement, Utility AI decisions, eating/drinking, memory and death are
-proven reproducible from a seed. Evolution itself (reproduction, mutation,
-natural selection, societies, …) is deliberately **not** built yet and will be
-layered on top of this foundation (see the phase plan in
-[ARCHITECTURE.md](ARCHITECTURE.md)).
+This repository currently contains **Phase 1 (the deterministic foundation),
+Phase 2 (Utility AI, survival and individual learning) and Phase 3 (Evolution:
+reproduction, inheritance and natural selection)**. The world, agents, needs,
+movement, Utility AI decisions, eating/drinking, memory, death and now **sexual
+reproduction with genetic inheritance and mutation** are all proven reproducible
+from a seed. Natural selection emerges from survival and breeding — there is no
+scripted fitness function. Later phases (see the phase plan in
+[ARCHITECTURE.md](ARCHITECTURE.md)) may add societies/civilization, but the
+evolution ladder is in place.
 
 ## What you see
 
 - A 64×64 tile world generated from a seed (terrain, food, water, temperature)
 - 50 agents that **decide what to do each tick**: rest, wander/explore, seek
-  food, seek water, eat or drink — scored with bounded utility curves and
-  deterministic tie-breaking
+  food, seek water, eat, drink or **seek a partner** — scored with bounded
+  utility curves and deterministic tie-breaking
 - Agents get hungry/thirsty/tired, spend energy while active, restore it while
   resting, take health damage when needs stay critical, and **die** when health
-  runs out
+  runs out (or when old age takes its toll)
+- **Reproduction**: adults in good health seek an opposite-sex, non-kin partner;
+  a birth crosses over the parents' genomes and applies **per-gene mutation**.
+  Children inherit genes (not memories), begin at age 0 and progress through
+  child → adolescent → adult → elderly life stages. High fertility shortens the
+  reproduction cooldown; intelligence/strength/fertility/speed carry a metabolic
+  energy cost, so they are not free.
 - Food/water are consumed and regrow toward their per-tile caps; agents
   **remember** resource locations (bounded per-agent memory that decays unless
   re-confirmed) and **learn faster / forget slower** with higher intelligence
-- Statistics (population, deaths, needs & resource averages), a selected-agent
-  inspector (with the live Utility AI table and memory lists), a history graph
-  and an event feed
+- Statistics (population, births, deaths, max generation, needs, genome & trait
+  averages, trait distributions, resource availability), a selected-agent
+  inspector (life stage, generation, parents, sex, reproduction cooldown, full
+  genome, per-gene inheritance origins, live Utility AI table, memory lists), a
+  history graph, an event feed and a development overlay
 - A development overlay with tick rate, worker status, render FPS and
   simulation timing
 
@@ -36,11 +46,16 @@ layered on top of this foundation (see the phase plan in
 | --- | --- | --- |
 | Circle size | `strength` | bigger circle = stronger agent |
 | Circle hue | `intelligence` | blue = low, yellow = high |
+| Inner ring width | `speed` | wider inner ring = faster agent |
 | Dimmed body | (intent) | currently resting |
 | Green ring | (intent) | currently eating |
 | Blue ring | (intent) | currently drinking |
+| Pink ring | (intent) | currently seeking a partner |
+| Amber dot | (intent) | currently wandering / exploring |
 
-Food is shown as a green tint on land tiles (denser green = more food).
+The intent ring is drawn just outside the body; the speed ring just inside it, so
+the two never overlap. Food is shown as a green tint on land tiles (denser green
+= more food).
 
 ## Run it locally
 
@@ -92,6 +107,12 @@ The suite includes:
 - **Phase-2 system tests** — utility curves & considerations, intelligence-
   modulated learning, memory capacity/decay/eviction, needs & death dynamics,
   resource consumption & regeneration, and Utility AI integration
+- **Phase-3 evolution tests** — life-stage mapping, genetic crossover &
+  mutation determinism and bounds, reproduction eligibility gates (age, sex,
+  cooldown, health, need, distance), generation/lineage inheritance, age
+  mortality, fresh-memory children, and whole-run reproduction that neither
+  explodes nor collapses; plus trait-distribution / evolution statistics and a
+  partner-search performance regression (linear, not quadratic, in population)
 - Worker engine tests (fixed timestep, pause/speed, message protocol) against
   the real worker entry module
 - **Source hygiene tests** — fail if `Math.random` appears anywhere in `src/`,
@@ -108,6 +129,12 @@ npx playwright install chromium   # one-time browser download
 npm run test:e2e                  # boots the app in Chromium and verifies:
                                   # worker runs, canvas paints, determinism holds
 ```
+
+In environments where the Playwright Chromium download is blocked (e.g. some
+sandboxes), the e2e test cannot run. The same guarantees are still covered by
+the Node test suite: the worker engine is driven against a clock-injected host
+(the real worker entry module), the UI modules transform cleanly, and the
+production build is verified. Run `npm test` to exercise those instead.
 
 ## Determinism in one paragraph
 

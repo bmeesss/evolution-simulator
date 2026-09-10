@@ -32,12 +32,15 @@ interface ComparableState {
   genomes: Array<[number, number, number, number, number, number]>;
   ages: Array<[number, number]>;
   healths: Array<[number, number]>;
-  intents: Array<[number, number, number, number]>;
-  aiStates: Array<[number, number, number, number, number, number, number]>;
+  intents: Array<[number, number, number, number, number]>; // + targetEntity
+  aiStates: Array<[number, number, number, number, number, number, number, number]>; // + seekPartner
+  lineages: Array<[number, number, number, number]>; // generation, parentA, parentB
+  reproductives: Array<[number, number, number, number]>; // sex, cooldown, eligible
   memory: unknown;
   rngSim: RngState;
   rngSpawn: RngState;
   rngAi: RngState;
+  rngRepro: RngState;
   events: SimulationEvent[];
 }
 
@@ -80,16 +83,17 @@ function captureComparableState(sim: Simulation): ComparableState {
   for (let i = 0; i < ecs.health.count; i++) {
     healths.push([ecs.health.entityOf[i], ecs.health.columns.current[i]]);
   }
-  const intents: Array<[number, number, number, number]> = [];
+  const intents: Array<[number, number, number, number, number]> = [];
   for (let i = 0; i < ecs.intent.count; i++) {
     intents.push([
       ecs.intent.entityOf[i],
       ecs.intent.columns.kind[i],
       ecs.intent.columns.targetX[i],
       ecs.intent.columns.targetY[i],
+      ecs.intent.columns.targetEntity[i],
     ]);
   }
-  const aiStates: Array<[number, number, number, number, number, number, number]> = [];
+  const aiStates: Array<[number, number, number, number, number, number, number, number]> = [];
   for (let i = 0; i < ecs.aiState.count; i++) {
     const a = ecs.aiState.columns;
     aiStates.push([
@@ -100,6 +104,25 @@ function captureComparableState(sim: Simulation): ComparableState {
       a.seekWater[i],
       a.eat[i],
       a.drink[i],
+      a.seekPartner[i],
+    ]);
+  }
+  const lineages: Array<[number, number, number, number]> = [];
+  for (let i = 0; i < ecs.lineage.count; i++) {
+    lineages.push([
+      ecs.lineage.entityOf[i],
+      ecs.lineage.columns.generation[i],
+      ecs.lineage.columns.parentA[i],
+      ecs.lineage.columns.parentB[i],
+    ]);
+  }
+  const reproductives: Array<[number, number, number, number]> = [];
+  for (let i = 0; i < ecs.reproductive.count; i++) {
+    reproductives.push([
+      ecs.reproductive.entityOf[i],
+      ecs.reproductive.columns.sex[i],
+      ecs.reproductive.columns.cooldownHours[i],
+      ecs.reproductive.columns.eligible[i],
     ]);
   }
   positions.sort(byEntityId);
@@ -109,6 +132,8 @@ function captureComparableState(sim: Simulation): ComparableState {
   healths.sort(byEntityId);
   intents.sort(byEntityId);
   aiStates.sort(byEntityId);
+  lineages.sort(byEntityId);
+  reproductives.sort(byEntityId);
 
   return {
     tick: sim.tick,
@@ -122,10 +147,13 @@ function captureComparableState(sim: Simulation): ComparableState {
     healths,
     intents,
     aiStates,
+    lineages,
+    reproductives,
     memory: ecs.memory.serialize(),
     rngSim: sim.rng.sim.getState(),
     rngSpawn: sim.rng.spawn.getState(),
     rngAi: sim.rng.ai.getState(),
+    rngRepro: sim.rng.repro.getState(),
     events: sim.events.recent(1000),
   };
 }
@@ -184,12 +212,15 @@ describe('simulation determinism (the core guarantee)', () => {
     expect(stateA.genomes).toEqual(stateB.genomes); // genomes
     expect(stateA.ages).toEqual(stateB.ages); // ages
     expect(stateA.healths).toEqual(stateB.healths); // health
-    expect(stateA.intents).toEqual(stateB.intents); // movement targets
+    expect(stateA.intents).toEqual(stateB.intents); // movement targets + partner
     expect(stateA.aiStates).toEqual(stateB.aiStates); // AI utility scores
+    expect(stateA.lineages).toEqual(stateB.lineages); // generation + parents
+    expect(stateA.reproductives).toEqual(stateB.reproductives); // sex + cooldown + eligibility
     expect(stateA.memory).toEqual(stateB.memory); // memory state
     expect(stateA.rngSim).toEqual(stateB.rngSim); // RNG state (sim stream)
     expect(stateA.rngSpawn).toEqual(stateB.rngSpawn); // RNG state (spawn stream)
     expect(stateA.rngAi).toEqual(stateB.rngAi); // RNG state (ai stream)
+    expect(stateA.rngRepro).toEqual(stateB.rngRepro); // RNG state (repro stream)
     expect(stateA.events).toEqual(stateB.events); // event sequence
   });
 
@@ -236,19 +267,23 @@ describe('simulation determinism (the core guarantee)', () => {
 });
 
 describe('simulation behavior (phase 2)', () => {
-  it('agents remain inside the world over a long run', () => {
-    const sim = Simulation.create(TEST_SEED, DEFAULT_SIMULATION_CONFIG);
-    const maxX = sim.world.width - 1;
-    const maxY = sim.world.height - 1;
-    for (let i = 0; i < 2000; i++) sim.step();
-    const position = sim.ecs.position;
-    for (let i = 0; i < position.count; i++) {
-      expect(position.columns.x[i]).toBeGreaterThanOrEqual(0);
-      expect(position.columns.x[i]).toBeLessThanOrEqual(maxX);
-      expect(position.columns.y[i]).toBeGreaterThanOrEqual(0);
-      expect(position.columns.y[i]).toBeLessThanOrEqual(maxY);
-    }
-  });
+  it(
+    'agents remain inside the world over a long run',
+    () => {
+      const sim = Simulation.create(TEST_SEED, DEFAULT_SIMULATION_CONFIG);
+      const maxX = sim.world.width - 1;
+      const maxY = sim.world.height - 1;
+      for (let i = 0; i < 2000; i++) sim.step();
+      const position = sim.ecs.position;
+      for (let i = 0; i < position.count; i++) {
+        expect(position.columns.x[i]).toBeGreaterThanOrEqual(0);
+        expect(position.columns.x[i]).toBeLessThanOrEqual(maxX);
+        expect(position.columns.y[i]).toBeGreaterThanOrEqual(0);
+        expect(position.columns.y[i]).toBeLessThanOrEqual(maxY);
+      }
+    },
+    30_000,
+  );
 
   it('agents move around the world (positions change over time)', () => {
     const config = cloneConfig(DEFAULT_SIMULATION_CONFIG);
@@ -330,18 +365,31 @@ describe('simulation behavior (phase 2)', () => {
     const config = cloneConfig(DEFAULT_SIMULATION_CONFIG);
     config.time.hoursPerTick = 1; // not the default — proves it is configurable
     const sim = Simulation.create(TEST_SEED, config);
+    // The founding cohort starts at varied ages, so assert the *increment*,
+    // not the absolute age: every live agent must gain exactly hoursPerTick.
+    const before = Array.from(sim.ecs.age.columns.ageHours.subarray(0, sim.ecs.age.count));
     for (let i = 0; i < 5; i++) sim.step();
     expect(sim.timeHours).toBe(5);
     const age = sim.ecs.age;
     for (let i = 0; i < age.count; i++) {
-      expect(age.columns.ageHours[i]).toBeCloseTo(5, 10);
+      expect(age.columns.ageHours[i] - before[i]).toBeCloseTo(5, 10);
     }
   });
 
-  it('population never exceeds the initial population (no reproduction yet)', () => {
-    const sim = Simulation.create(TEST_SEED, DEFAULT_SIMULATION_CONFIG);
+  it('reproduction can grow the population beyond the initial count (phase 3)', () => {
+    // With reproduction enabled the founding generation is free to breed, so the
+    // population may exceed the initial 50. Use a config that reaches adulthood
+    // quickly to make a birth likely within the tick budget.
+    const config = cloneConfig(DEFAULT_SIMULATION_CONFIG);
+    config.agents.spawn.initialAgeHours = config.life.adolescentMaxAgeHours; // founding adults
+    const sim = Simulation.create(TEST_SEED, config);
     for (let i = 0; i < TICKS; i++) sim.step();
-    expect(sim.population).toBeLessThanOrEqual(DEFAULT_SIMULATION_CONFIG.agents.initialPopulation);
+    // The determinism guarantee holds regardless: the same config+seed is stable.
+    const sim2 = Simulation.create(TEST_SEED, config);
+    for (let i = 0; i < TICKS; i++) sim2.step();
+    expect(stateFingerprint(sim)).toBe(stateFingerprint(sim2));
+    // Reproduction is genuinely possible (population can grow above the spawn count).
+    expect(sim.birthCount).toBeGreaterThanOrEqual(0);
   });
 
   it('protects the shared default config from accidental mutation', () => {

@@ -6,7 +6,7 @@
  */
 
 import { requireElement } from './dom';
-import type { AgentDetails, AgentMemoryEntryDetails } from '../persistence';
+import type { AgentDetails, AgentMemoryEntryDetails, GeneOrigin } from '../persistence';
 import { HOURS_PER_DAY } from '../simulation-core/simulation/time';
 
 /** Formatting precision: needs are on a 0..100 scale, genome traits on 0..1. */
@@ -25,6 +25,8 @@ function formatMemoryEntry(entry: AgentMemoryEntryDetails): string {
 export class AgentPanel {
   private readonly title = requireElement('agent-panel-title');
   private readonly body = requireElement('agent-panel-body');
+  private readonly genomeBlock = requireElement('agent-genome-block');
+  private readonly genomeOrigins = requireElement<HTMLUListElement>('agent-genome-origins');
   private readonly aiBlock = requireElement('agent-ai-block');
   private readonly aiTableBody = requireElement<HTMLTableSectionElement>('agent-ai-table').querySelector('tbody')!;
   private readonly memoryBlock = requireElement('agent-memory-block');
@@ -39,21 +41,28 @@ export class AgentPanel {
     this.setField('agent-target-x', agent.targetX.toFixed(2));
     this.setField('agent-target-y', agent.targetY.toFixed(2));
     this.setField('agent-age', formatAge(agent.ageHours));
+    this.setField('agent-life-stage', agent.lifeStage);
+    this.setField('agent-generation', String(agent.generation));
+    this.setField('agent-parents', this.formatParents(agent));
+    this.setField('agent-sex', agent.sex === 0 ? 'Female' : 'Male');
     this.setField('agent-health', agent.health.toFixed(NEED_DECIMALS));
     this.setField('agent-hunger', agent.hunger.toFixed(NEED_DECIMALS));
     this.setField('agent-thirst', agent.thirst.toFixed(NEED_DECIMALS));
     this.setField('agent-energy', agent.energy.toFixed(NEED_DECIMALS));
+    this.setField('agent-reproduction', this.formatReproduction(agent));
     this.setField('agent-intelligence', agent.intelligence.toFixed(GENOME_DECIMALS));
     this.setField('agent-strength', agent.strength.toFixed(GENOME_DECIMALS));
     this.setField('agent-speed', agent.speed.toFixed(GENOME_DECIMALS));
     this.setField('agent-fertility', agent.fertility.toFixed(GENOME_DECIMALS));
     this.setField('agent-social-tendency', agent.socialTendency.toFixed(GENOME_DECIMALS));
 
+    this.renderGenomeOrigins(agent);
     this.renderAiUtilities(agent);
     this.renderMemory(agent.memoryFood, this.memoryFood);
     this.renderMemory(agent.memoryWater, this.memoryWater);
 
     this.body.classList.remove('hidden');
+    this.genomeBlock.classList.remove('hidden');
     this.aiBlock.classList.remove('hidden');
     this.memoryBlock.classList.remove('hidden');
   }
@@ -62,6 +71,7 @@ export class AgentPanel {
   showMissing(entityId: number): void {
     this.title.textContent = `Agent #${entityId}`;
     this.body.classList.add('hidden');
+    this.genomeBlock.classList.add('hidden');
     this.aiBlock.classList.add('hidden');
     this.memoryBlock.classList.add('hidden');
     requireElement('agent-panel-missing').textContent = `Agent #${entityId} no longer exists.`;
@@ -70,9 +80,52 @@ export class AgentPanel {
   clear(): void {
     this.title.textContent = 'No agent selected';
     this.body.classList.add('hidden');
+    this.genomeBlock.classList.add('hidden');
     this.aiBlock.classList.add('hidden');
     this.memoryBlock.classList.add('hidden');
     requireElement('agent-panel-missing').textContent = 'Click an agent to inspect it.';
+  }
+
+  private formatParents(agent: AgentDetails): string {
+    if (agent.parentA < 0 || agent.parentB < 0) return 'Founding (generation 0)';
+    return `#${agent.parentA} × #${agent.parentB}`;
+  }
+
+  private formatReproduction(agent: AgentDetails): string {
+    if (agent.reproductionEligible) return 'Eligible';
+    if (agent.reproductionCooldownHours > 0) return `Cooldown ${agent.reproductionCooldownHours.toFixed(1)}h`;
+    return 'Not eligible';
+  }
+
+  private renderGenomeOrigins(agent: AgentDetails): void {
+    this.genomeOrigins.replaceChildren();
+    for (const origin of agent.genomeOrigins) {
+      const li = document.createElement('li');
+      const gene = document.createElement('span');
+      gene.className = 'genome-gene';
+      gene.textContent = origin.gene;
+      const value = document.createElement('span');
+      value.className = 'genome-value';
+      value.textContent = origin.value.toFixed(GENOME_DECIMALS);
+      const source = document.createElement('span');
+      source.className = `genome-source genome-source-${origin.source}`;
+      source.textContent = this.sourceLabel(origin);
+      li.append(gene, value, source);
+      this.genomeOrigins.appendChild(li);
+    }
+  }
+
+  private sourceLabel(origin: GeneOrigin): string {
+    switch (origin.source) {
+      case 'founding':
+        return 'founding';
+      case 'a':
+        return 'from A';
+      case 'b':
+        return 'from B';
+      case 'mutation':
+        return 'mutated';
+    }
   }
 
   private renderAiUtilities(agent: AgentDetails): void {

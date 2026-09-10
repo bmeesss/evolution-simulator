@@ -51,9 +51,16 @@ export const GenomeSchema = {
 /**
  * Current behavioral intent, written by the AI module and consumed by the
  * movement/needs systems. `kind` uses the AgentIntent constants; `targetX/Y`
- * is the current movement goal (tile units).
+ * is the current movement goal (tile units). For SeekPartner, `targetEntity`
+ * holds the chosen partner's entity id (or -1).
  */
-export const IntentSchema = { kind: Uint8Array, targetX: Float64Array, targetY: Float64Array };
+export const IntentSchema = {
+  kind: Uint8Array,
+  targetX: Float64Array,
+  targetY: Float64Array,
+  /** Chosen partner entity id for SeekPartner intents, -1 otherwise. */
+  targetEntity: Int32Array,
+};
 
 /**
  * Per-agent Utility AI scores from the most recent decision pass (the base
@@ -69,4 +76,31 @@ export const AiStateSchema = {
   seekWater: Float32Array,
   eat: Float32Array,
   drink: Float32Array,
+  seekPartner: Float32Array,
+};
+
+/**
+ * Lineage — persistent genealogy fields. `generation` is a lineage concept:
+ * a child's generation is `max(parentA.gen, parentB.gen) + 1`, so agents do not
+ * all reproduce synchronously. `parentA`/`parentB` are entity ids, or -1 sentinel
+ * for the founding generation (which has no parents).
+ */
+export const LineageSchema = {
+  generation: Uint32Array,
+  parentA: Int32Array,
+  parentB: Int32Array,
+};
+
+/**
+ * Reproductive state — a deliberately simple, deterministic model: binary sex
+ * (0/1), a remaining reproduction cooldown (in-game hours) and a cached
+ * `eligible` flag (1 when the agent is currently reproductively eligible, i.e.
+ * adult, healthy enough, needs tolerable and cooldown expired). Eligibility is
+ * recomputed each tick and persisted so the inspector and determinism tests can
+ * read it without recomputation. No pregnancy/menstrual cycles/rituals.
+ */
+export const ReproductiveSchema = {
+  sex: Uint8Array,
+  cooldownHours: Float64Array,
+  eligible: Uint8Array,
 };

@@ -46,7 +46,9 @@
               <div><dt>Tick</dt><dd id="stat-tick">—</dd></div>
               <div><dt>Time</dt><dd id="stat-time">—</dd></div>
               <div><dt>Population</dt><dd id="stat-population">—</dd></div>
+              <div><dt>Births</dt><dd id="stat-births">—</dd></div>
               <div><dt>Deaths</dt><dd id="stat-deaths">—</dd></div>
+              <div><dt>Max generation</dt><dd id="stat-max-generation">—</dd></div>
               <div><dt>Avg hunger</dt><dd id="stat-avg-hunger">—</dd></div>
               <div><dt>Avg thirst</dt><dd id="stat-avg-thirst">—</dd></div>
               <div><dt>Avg energy</dt><dd id="stat-avg-energy">—</dd></div>
@@ -54,6 +56,8 @@
               <div><dt>Avg intelligence</dt><dd id="stat-avg-intelligence">—</dd></div>
               <div><dt>Avg strength</dt><dd id="stat-avg-strength">—</dd></div>
               <div><dt>Avg speed</dt><dd id="stat-avg-speed">—</dd></div>
+              <div><dt>Avg fertility</dt><dd id="stat-avg-fertility">—</dd></div>
+              <div><dt>Avg social tend.</dt><dd id="stat-avg-social-tendency">—</dd></div>
               <div><dt>Food avail.</dt><dd id="stat-food">—</dd></div>
               <div><dt>Water avail.</dt><dd id="stat-water">—</dd></div>
             </dl>
@@ -65,6 +69,11 @@
             <ul id="history-legend" class="history-legend"></ul>
           </section>
 
+          <section class="panel" aria-label="Trait distributions">
+            <h2>Trait distributions</h2>
+            <div id="trait-distributions" class="trait-distributions"></div>
+          </section>
+
           <section class="panel" aria-label="Selected agent">
             <h2 id="agent-panel-title">No agent selected</h2>
             <p id="agent-panel-missing" class="muted">Click an agent to inspect it.</p>
@@ -73,16 +82,25 @@
               <div><dt>Intent</dt><dd id="agent-intent">—</dd></div>
               <div><dt>Target</dt><dd><span id="agent-target-x">—</span>, <span id="agent-target-y">—</span></dd></div>
               <div><dt>Age</dt><dd id="agent-age">—</dd></div>
+              <div><dt>Life stage</dt><dd id="agent-life-stage">—</dd></div>
+              <div><dt>Generation</dt><dd id="agent-generation">—</dd></div>
+              <div><dt>Parents</dt><dd id="agent-parents">—</dd></div>
+              <div><dt>Sex</dt><dd id="agent-sex">—</dd></div>
               <div><dt>Health</dt><dd id="agent-health">—</dd></div>
               <div><dt>Hunger</dt><dd id="agent-hunger">—</dd></div>
               <div><dt>Thirst</dt><dd id="agent-thirst">—</dd></div>
               <div><dt>Energy</dt><dd id="agent-energy">—</dd></div>
+              <div><dt>Reproduction</dt><dd id="agent-reproduction">—</dd></div>
               <div><dt>Intelligence</dt><dd id="agent-intelligence">—</dd></div>
               <div><dt>Strength</dt><dd id="agent-strength">—</dd></div>
               <div><dt>Speed</dt><dd id="agent-speed">—</dd></div>
               <div><dt>Fertility</dt><dd id="agent-fertility">—</dd></div>
               <div><dt>Social tendency</dt><dd id="agent-social-tendency">—</dd></div>
             </dl>
+            <div id="agent-genome-block" class="agent-genome-block hidden">
+              <h3>Genome & inheritance</h3>
+              <ul id="agent-genome-origins" class="genome-origins"></ul>
+            </div>
             <div id="agent-ai-block" class="agent-ai-block hidden">
               <h3>AI — action utilities</h3>
               <table id="agent-ai-table" class="ai-table">

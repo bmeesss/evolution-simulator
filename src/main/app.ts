@@ -19,6 +19,7 @@ import { DebugOverlay } from '../ui/debug-overlay';
 import { EventLogPanel } from '../ui/event-log-panel';
 import { StatsPanel } from '../ui/stats-panel';
 import { HistoryGraph } from '../ui/history-graph';
+import { TraitDistributionsPanel } from '../ui/trait-distributions';
 import type { SimulationSaveState, DeterminismCheckResult, SimulationSnapshot } from '../persistence';
 import type { EntityId } from '../simulation-core';
 
@@ -66,6 +67,7 @@ export class EvolutionApp {
   });
   private readonly stats = new StatsPanel();
   private readonly historyGraph = new HistoryGraph();
+  private readonly traitDistributions = new TraitDistributionsPanel();
   private readonly agentPanel = new AgentPanel();
   private readonly eventLog = new EventLogPanel();
   private readonly debugOverlay = new DebugOverlay();
@@ -177,6 +179,7 @@ export class EvolutionApp {
     this.controls.setSpeed(multiplier);
     this.stats.clear();
     this.historyGraph.clear();
+    this.traitDistributions.clear();
     this.agentPanel.clear();
     this.eventLog.clear();
   }
@@ -186,6 +189,7 @@ export class EvolutionApp {
     this.snapshotCount++;
     this.stats.update(snapshot);
     this.historyGraph.push(snapshot);
+    this.traitDistributions.update(snapshot);
     // Keep the selected-agent panel live (guarded against stale replies).
     const selected = this.selection.entityId;
     if (selected !== null) {

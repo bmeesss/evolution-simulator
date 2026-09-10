@@ -28,13 +28,16 @@
  */
 
 import type { EntityId } from '../ecs';
+import type { SimulationEcs } from '../ecs';
 import type { World } from '../world';
 import type { SimulationConfig, TickContext } from '../simulation';
+import { lifeStageForAge, isReproductiveStage } from '../simulation/life-stages';
 import { AgentIntent } from './intents';
 import { ActionKind } from './actions';
 import { ResourceType, type ResourceType as ResourceTypeType } from './memory';
 import type { MemoryStore } from './memory';
 import type { ResourceIndex } from './perception';
+import type { AgentIndex } from './perception';
 import { clamp01 } from './utility';
 import {
   fatigueUrgency,
@@ -43,6 +46,8 @@ import {
   resourceQuality,
   distanceFactorSquared,
   explorationUncertainty,
+  reproductionUrgency,
+  partnerDesirability,
 } from './considerations';
 
 /** Reflect a value that fell outside [min, max] back inside (spreads wander targets). */
@@ -160,8 +165,141 @@ function findBestResource(
   return bestTile !== -1;
 }
 
+/**
+ * Reused partner-query scratch (a single object shared across the per-agent
+ * loop, so no allocation happens per agent). Read immediately after
+ * `findBestPartner`; do not retain across queries.
+ */
+const partnerScratch = { entityId: -1, x: 0, y: 0, score: -1 };
+
+/**
+ * True when `a` and `b` are direct parent/child or share a parent (siblings).
+ * The founding generation uses -1 sentinels for absent parents, so kin checks
+ * involving a founder always return false. Cheap O(1) — no family graph, no
+ * full ancestry walk (the spec explicitly avoids a full social/family graph).
+ */
+function isKin(a: EntityId, b: EntityId, ecs: SimulationEcs): boolean {
+  const lin = ecs.lineage;
+  const aSlot = lin.index[a];
+  const bSlot = lin.index[b];
+  if (aSlot < 0 || bSlot < 0) return false;
+  const aA = lin.columns.parentA[aSlot];
+  const aB = lin.columns.parentB[aSlot];
+  const bA = lin.columns.parentA[bSlot];
+  const bB = lin.columns.parentB[bSlot];
+  if (aA === b || aB === b) return true; // a is parent of b
+  if (bA === a || bB === a) return true; // b is parent of a
+  if (aA >= 0 && (aA === bA || aA === bB)) return true; // share parent A
+  if (aB >= 0 && (aB === bA || aB === bB)) return true; // share parent B
+  return false;
+}
+
+/**
+ * Upper bound on partner candidates any one agent inspects per tick. In a dense
+ * cluster the 3×3-cell walk would otherwise visit every agent in a cell and turn
+ * the per-agent partner search into O(population) (and the whole tick into
+ * O(n²)). Capping the scan keeps the per-agent work O(1) — an agent inspects at
+ * most this many nearby candidates and keeps the best it saw. At sparse
+ * populations the cap is not reached and the best candidate is still found.
+ */
+const MAX_PARTNER_SCAN = 48;
+
+/**
+ * Find the best valid nearby partner for `selfEntity` using the AgentIndex.
+ * Walks only the 3×3 grid cells around the agent (cell size = partner-seek
+ * radius), so it is O(nearbyAgents) — never O(allAgents). Filters strictly:
+ *   - not self, opposite sex, alive, adult/elderly branch handled upstream
+ *   - candidate is reproductively eligible (cached flag, updated each tick)
+ *   - candidate health >= minHealthToReproduce
+ *   - not direct kin (parent/child/sibling) — incest avoidance
+ * Scores survivors with `partnerDesirability`. Writes the best candidate seen
+ * into `partnerScratch` and returns false when nothing valid was found.
+ */
+function findBestPartner(
+  selfEntity: EntityId,
+  selfOriginX: number,
+  selfOriginY: number,
+  agentIndex: AgentIndex,
+  ecs: SimulationEcs,
+  config: SimulationConfig,
+): boolean {
+  const { reproduction } = config;
+  const radiusSq = reproduction.partnerSeekRadiusTiles * reproduction.partnerSeekRadiusTiles;
+  const position = ecs.position;
+  const genome = ecs.genome;
+  const reproStore = ecs.reproductive;
+  const health = ecs.health;
+
+  const selfSlot = reproStore.index[selfEntity];
+  if (selfSlot < 0) return false;
+  const selfSex = reproStore.columns.sex[selfSlot];
+
+  const selfGenomeSlot = genome.index[selfEntity];
+  const selfSocial = selfGenomeSlot >= 0 ? genome.columns.socialTendency[selfGenomeSlot] : 0;
+
+  const col = agentIndex.cellCol(selfOriginX);
+  const row = agentIndex.cellRow(selfOriginY);
+  const minCol = col > 0 ? col - 1 : 0;
+  const maxCol = col < agentIndex.cols - 1 ? col + 1 : agentIndex.cols - 1;
+  const minRow = row > 0 ? row - 1 : 0;
+  const maxRow = row < agentIndex.rows - 1 ? row + 1 : agentIndex.rows - 1;
+
+  let bestEntity = -1;
+  let bestX = 0;
+  let bestY = 0;
+  let bestScore = -1;
+  let scanned = 0;
+
+  scanCells: for (let r = minRow; r <= maxRow; r++) {
+    for (let c = minCol; c <= maxCol; c++) {
+      for (let candidate = agentIndex.headOf(agentIndex.cellIndex(c, r)); candidate !== -1; candidate = agentIndex.nextOf(candidate)) {
+        if (scanned >= MAX_PARTNER_SCAN) break scanCells;
+        scanned++;
+        if (candidate === selfEntity) continue;
+        const posSlot = position.index[candidate];
+        if (posSlot < 0) continue;
+        const cx = position.columns.x[posSlot];
+        const cy = position.columns.y[posSlot];
+        const dx = cx - selfOriginX;
+        const dy = cy - selfOriginY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq > radiusSq) continue;
+
+        // Reproductive filters.
+        const candidateReproSlot = reproStore.index[candidate];
+        if (candidateReproSlot < 0) continue;
+        if (reproStore.columns.sex[candidateReproSlot] === selfSex) continue; // same sex
+        if (reproStore.columns.eligible[candidateReproSlot] !== 1) continue; // not ready
+        const candidateHealthSlot = health.index[candidate];
+        if (candidateHealthSlot < 0) continue;
+        const candidateHealth = health.columns.current[candidateHealthSlot];
+        if (candidateHealth < reproduction.minHealthToReproduce) continue;
+        if (isKin(selfEntity, candidate, ecs)) continue;
+
+        const candidateGenomeSlot = genome.index[candidate];
+        const candidateFertility = candidateGenomeSlot >= 0 ? genome.columns.fertility[candidateGenomeSlot] : 0;
+        const candidateSocial = candidateGenomeSlot >= 0 ? genome.columns.socialTendency[candidateGenomeSlot] : 0;
+
+        const score = partnerDesirability(distSq, radiusSq, candidateHealth, candidateFertility, selfSocial, candidateSocial);
+        if (score > bestScore) {
+          bestScore = score;
+          bestEntity = candidate;
+          bestX = cx;
+          bestY = cy;
+        }
+      }
+    }
+  }
+
+  partnerScratch.entityId = bestEntity;
+  partnerScratch.x = bestX;
+  partnerScratch.y = bestY;
+  partnerScratch.score = bestScore;
+  return bestEntity !== -1;
+}
+
 export function selectIntents(ctx: TickContext): void {
-  const { ecs, world, config, aiRng, resourceIndex } = ctx;
+  const { ecs, world, config, aiRng, resourceIndex, agentIndex } = ctx;
   const intent = ecs.intent;
   const needs = ecs.needs;
   const position = ecs.position;
@@ -181,12 +319,14 @@ export function selectIntents(ctx: TickContext): void {
   const maxY = world.height - 1;
 
   resourceIndex.rebuild(world, minFood, minWater);
+  agentIndex.rebuild(ecs);
 
   for (let i = 0; i < intent.count; i++) {
     const entity = intent.entityOf[i];
     const prevKind = intent.columns.kind[i];
     const prevTargetX = intent.columns.targetX[i];
     const prevTargetY = intent.columns.targetY[i];
+    const prevTargetEntity = intent.columns.targetEntity[i];
     const needsSlot = needs.index[entity];
     const positionSlot = position.index[entity];
     if (needsSlot < 0 || positionSlot < 0) continue;
@@ -207,6 +347,31 @@ export function selectIntents(ctx: TickContext): void {
     const waterX = hasWater ? resourceIndex.best.x : 0;
     const waterY = hasWater ? resourceIndex.best.y : 0;
 
+    // Early lifecycle lookups (also used by the reproduction drive below).
+    const ageSlot = ecs.age.index[entity];
+    const healthSlot = ecs.health.index[entity];
+    const genomeSlot = ecs.genome.index[entity];
+    const ageHours = ageSlot >= 0 ? ecs.age.columns.ageHours[ageSlot] : 0;
+    const currentHealth = healthSlot >= 0 ? ecs.health.columns.current[healthSlot] : 0;
+    const fertility = genomeSlot >= 0 ? ecs.genome.columns.fertility[genomeSlot] : 0;
+    const socialTendency = genomeSlot >= 0 ? ecs.genome.columns.socialTendency[genomeSlot] : 0;
+
+    // Only adults/elderly in a safe survival state scan for a partner, so
+    // children/adolescents/starving agents never cost the nearby-entity walk.
+    const reproCapable =
+      isReproductiveStage(lifeStageForAge(ageHours, config)) &&
+      currentHealth >= config.reproduction.minHealthToReproduce &&
+      energy >= config.reproduction.minEnergyToReproduce &&
+      hunger < config.reproduction.maxNeedToReproduce &&
+      thirst < config.reproduction.maxNeedToReproduce;
+
+    // --- Best valid partner (AgentIndex; O(nearby), never O(population)) -----
+    const hasPartner = reproCapable ? findBestPartner(entity, x, y, agentIndex, ecs, config) : false;
+    const partnerScore = hasPartner ? partnerScratch.score : 0;
+    const partnerId = hasPartner ? partnerScratch.entityId : -1;
+    const partnerX = hasPartner ? partnerScratch.x : 0;
+    const partnerY = hasPartner ? partnerScratch.y : 0;
+
     // --- Resources under the agent's own feet (for the stationary Eat/Drink) --
     const tileIdx = world.tileIndex(Math.floor(x), Math.floor(y));
     const foodHere = world.food[tileIdx];
@@ -219,6 +384,16 @@ export function selectIntents(ctx: TickContext): void {
     const uSeekWater = thirstUrgency(thirst, config) * waterScore;
     const uEat = foodHere >= minFood ? hungerUrgency(hunger, config) * clamp01(foodHere / eatAmount) : 0;
     const uDrink = waterHere >= minWater ? thirstUrgency(thirst, config) * clamp01(waterHere / drinkAmount) : 0;
+    const uSeekPartner = reproductionUrgency(
+      ageHours,
+      currentHealth,
+      energy,
+      hunger,
+      thirst,
+      fertility,
+      socialTendency,
+      config,
+    ) * partnerScore;
 
     // Persist base scores for the debug view and determinism tests.
     const aiSlot = aiState.index[entity];
@@ -229,10 +404,11 @@ export function selectIntents(ctx: TickContext): void {
       aiState.columns.seekWater[aiSlot] = uSeekWater;
       aiState.columns.eat[aiSlot] = uEat;
       aiState.columns.drink[aiSlot] = uDrink;
+      aiState.columns.seekPartner[aiSlot] = uSeekPartner;
     }
 
     // --- Deterministic tie-break noise + action hysteresis ------------------
-    // Six jitter draws per agent, in ActionKind order, every tick — unconditional
+    // Seven jitter draws per agent, in ActionKind order, every tick — unconditional
     // so AI RNG consumption never depends on which branch wins.
     const nRest = (aiRng.nextFloat() * 2 - 1) * noise;
     const nWander = (aiRng.nextFloat() * 2 - 1) * noise;
@@ -240,6 +416,7 @@ export function selectIntents(ctx: TickContext): void {
     const nSeekWater = (aiRng.nextFloat() * 2 - 1) * noise;
     const nEat = (aiRng.nextFloat() * 2 - 1) * noise;
     const nDrink = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nSeekPartner = (aiRng.nextFloat() * 2 - 1) * noise;
 
     let winner: ActionKind = ActionKind.Rest;
     let best = uRest + nRest + (prevKind === AgentIntent.Rest ? hysteresis : 0);
@@ -268,10 +445,16 @@ export function selectIntents(ctx: TickContext): void {
       best = v;
       winner = ActionKind.Drink;
     }
+    v = uSeekPartner + nSeekPartner + (prevKind === AgentIntent.SeekPartner ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.SeekPartner;
+    }
 
     // --- Choose/keep the movement target (action hysteresis for targets) ----
     let targetX = x;
     let targetY = y;
+    let targetEntity = -1;
     switch (winner) {
       case ActionKind.Rest:
       case ActionKind.Eat:
@@ -317,10 +500,34 @@ export function selectIntents(ctx: TickContext): void {
         }
         break;
       }
+      case ActionKind.SeekPartner: {
+        // Keep pursuing the same still-valid partner; otherwise re-target.
+        const keepTarget =
+          prevKind === AgentIntent.SeekPartner &&
+          prevTargetEntity >= 0 &&
+          ecs.entities.isAlive(prevTargetEntity);
+        if (keepTarget) {
+          targetEntity = prevTargetEntity;
+          const pSlot = position.index[prevTargetEntity];
+          if (pSlot >= 0) {
+            targetX = position.columns.x[pSlot];
+            targetY = position.columns.y[pSlot];
+          } else {
+            targetX = x;
+            targetY = y;
+          }
+        } else if (hasPartner) {
+          targetEntity = partnerId;
+          targetX = partnerX;
+          targetY = partnerY;
+        }
+        break;
+      }
     }
 
     intent.columns.kind[i] = winner;
     intent.columns.targetX[i] = targetX;
     intent.columns.targetY[i] = targetY;
+    intent.columns.targetEntity[i] = targetEntity;
   }
 }

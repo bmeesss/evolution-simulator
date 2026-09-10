@@ -19,17 +19,21 @@ import type { RngState, SerializedEcs, SerializedWorld } from '../simulation-cor
 /**
  * Save format version. Bumped for Phase 2 (2): the layout now includes the AI
  * RNG stream, the memory + aiState stores, the world's resource-cap arrays and
- * the new ai/memory/resources config sections. Version 1 saves are no longer
- * loadable (the new sections are required).
+ * the new ai/memory/resources config sections. Bumped for Phase 3 (3): this
+ * adds the dedicated `repro` RNG stream, the lineage + reproductive component
+ * stores (which carry generation, parents, sex, cooldown and eligibility), the
+ * new `targetEntity` field on the intent store, the `seekPartner` AI column and
+ * the life/reproduction/mortality/metabolism/mutation config sections. Versions
+ * 1 and 2 saves are no longer loadable (the new sections are required).
  */
-export const SAVE_FORMAT_VERSION = 2;
+export const SAVE_FORMAT_VERSION = 3;
 
 export interface SimulationSaveState {
   readonly version: number;
   readonly seed: number;
   readonly tick: number;
   readonly config: SimulationConfig;
-  readonly rng: { sim: RngState; spawn: RngState; ai: RngState };
+  readonly rng: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState };
   readonly world: SerializedWorld;
   readonly ecs: SerializedEcs;
 }

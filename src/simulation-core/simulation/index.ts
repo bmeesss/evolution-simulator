@@ -15,6 +15,11 @@ export type {
   AiConfig,
   MemoryConfig,
   ResourcesConfig,
+  LifeStageConfig,
+  ReproductionConfig,
+  MortalityConfig,
+  MetabolismConfig,
+  MutationConfig,
 } from './config';
 export type { TickContext } from './tick-context';
 export { formatTimeHours, HOURS_PER_DAY } from './time';
@@ -26,3 +31,15 @@ export { updateMemory } from './systems/memory-system';
 export { regenerateResources } from './systems/regeneration-system';
 export { updateDeaths } from './systems/death-system';
 export { updateAging } from './systems/aging-system';
+export { updateMortality, ageHealthDrainPerHour } from './systems/mortality-system';
+export { updateReproduction } from './systems/reproduction-system';
+export {
+  LifeStage,
+  LIFE_STAGE_NAMES,
+  lifeStageForAge,
+  lifeStageName,
+  movementEfficiencyForStage,
+  energyDrainMultiplierForStage,
+  isReproductiveStage,
+} from './life-stages';
+export type { LifeStage as LifeStageType } from './life-stages';

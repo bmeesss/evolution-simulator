@@ -17,6 +17,8 @@ import {
   agentColor,
   agentRadiusTiles,
   intentIndicatorColor,
+  speedRingWidthTiles,
+  moveMarkerColor,
   isRestingIntent,
   RESTING_ALPHA,
 } from './agent-visuals';
@@ -150,7 +152,20 @@ export class WorldRenderer {
       ctx.strokeStyle = AGENT_OUTLINE_COLOR;
       ctx.stroke();
 
-      // State indicator ring: eating (green) or drinking (blue).
+      // Speed ring: a thin inner ring whose width encodes the `speed` genome
+      // (a wider ring = faster agent). Drawn just inside the body so it never
+      // overlaps the intent indicator outside it.
+      const speedWidth = speedRingWidthTiles(agents.speed[i]) * tile;
+      if (speedWidth > 0) {
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(1, radius - speedWidth - 1), 0, Math.PI * 2);
+        ctx.lineWidth = Math.max(1, speedWidth);
+        ctx.strokeStyle = AGENT_OUTLINE_COLOR;
+        ctx.stroke();
+      }
+
+      // Intent ring for a concrete interaction (eat green / drink blue /
+      // seek-partner pink) drawn just outside the body.
       const ringColor = intentIndicatorColor(kind);
       if (ringColor !== null) {
         ctx.beginPath();
@@ -158,6 +173,16 @@ export class WorldRenderer {
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = ringColor;
         ctx.stroke();
+      }
+
+      // A small dot for an actively-wandering agent (exploring), so movement
+      // intention is visible without cluttering the body.
+      const moveColor = moveMarkerColor(kind);
+      if (moveColor !== null) {
+        ctx.beginPath();
+        ctx.arc(x + radius + Math.max(1, tile * 0.16), y - radius - Math.max(1, tile * 0.16), Math.max(1, tile * 0.06), 0, Math.PI * 2);
+        ctx.fillStyle = moveColor;
+        ctx.fill();
       }
       ctx.globalAlpha = 1;
 

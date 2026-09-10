@@ -12,17 +12,20 @@
 import { NEED_MAX, NEED_MIN } from '../config';
 import type { TickContext } from '../tick-context';
 import { AgentIntent } from '../../ai';
+import { energyDrainMultiplierForStage, lifeStageForAge } from '../life-stages';
 
 export function updateNeeds(ctx: TickContext): void {
   const { ecs, config, dtHours } = ctx;
   const needs = ecs.needs;
   const intent = ecs.intent;
   const health = ecs.health;
+  const genome = ecs.genome;
+  const age = ecs.age;
   const needsConfig = config.needs;
+  const metabolism = config.metabolism;
 
   const hungerPerTick = needsConfig.hungerPerHour * dtHours;
   const thirstPerTick = needsConfig.thirstPerHour * dtHours;
-  const energyDrainPerTick = needsConfig.energyDrainPerHourActive * dtHours;
   const energyRegenPerTick = needsConfig.energyRegenPerHourResting * dtHours;
 
   for (let i = 0; i < needs.count; i++) {
@@ -38,6 +41,26 @@ export function updateNeeds(ctx: TickContext): void {
     if (isResting) {
       columns.energy[i] = Math.min(NEED_MAX, columns.energy[i] + energyRegenPerTick);
     } else {
+      // Gene trade-off: traits cost energy (documented in ARCHITECTURE.md). Higher
+      // intelligence/strength/fertility/speed burn more per active hour, so they are
+      // not free. Life-stage raises the multiplier for growing children.
+      const genomeSlot = genome.index[entity];
+      const intel = genomeSlot >= 0 ? genome.columns.intelligence[genomeSlot] : 0;
+      const strength = genomeSlot >= 0 ? genome.columns.strength[genomeSlot] : 0;
+      const fertility = genomeSlot >= 0 ? genome.columns.fertility[genomeSlot] : 0;
+      const speed = genomeSlot >= 0 ? genome.columns.speed[genomeSlot] : 0;
+      const metabolicCost = 1 +
+        intel * metabolism.intelligenceCostFactor +
+        strength * metabolism.strengthCostFactor +
+        fertility * metabolism.fertilityCostFactor +
+        speed * metabolism.speedCostFactor;
+
+      const ageSlot = age.index[entity];
+      const ageHours = ageSlot >= 0 ? age.columns.ageHours[ageSlot] : 0;
+      const lifeMultiplier = energyDrainMultiplierForStage(lifeStageForAge(ageHours, config), config);
+
+      const energyDrainPerTick =
+        needsConfig.energyDrainPerHourActive * dtHours * metabolicCost * lifeMultiplier;
       columns.energy[i] = Math.max(NEED_MIN, columns.energy[i] - energyDrainPerTick);
     }
 

@@ -17,12 +17,14 @@
 
 import type { TickContext } from '../tick-context';
 import { isMovementIntent } from '../../ai';
+import { lifeStageForAge, movementEfficiencyForStage } from '../life-stages';
 
 export function moveAgents(ctx: TickContext): void {
   const { ecs, world, config, dtHours } = ctx;
   const intent = ecs.intent;
   const position = ecs.position;
   const genome = ecs.genome;
+  const age = ecs.age;
 
   const maxX = world.width - 1;
   const maxY = world.height - 1;
@@ -49,7 +51,11 @@ export function moveAgents(ctx: TickContext): void {
       const genomeSpeed = genomeSlot >= 0 ? genome.columns.speed[genomeSlot] : 0;
       const speedTilesPerHour =
         config.movement.baseSpeedTilesPerHour + genomeSpeed * config.movement.speedRangeTilesPerHour;
-      const maxStep = speedTilesPerHour * dtHours;
+      // Life-stage modifier: children/adolescents/elderly move relatively slower.
+      const ageSlot = age.index[entity];
+      const ageHours = ageSlot >= 0 ? age.columns.ageHours[ageSlot] : 0;
+      const efficiency = movementEfficiencyForStage(lifeStageForAge(ageHours, config), config);
+      const maxStep = speedTilesPerHour * efficiency * dtHours;
       const distance = Math.sqrt(distanceSquared);
       if (distance > maxStep) {
         x += (dx / distance) * maxStep;

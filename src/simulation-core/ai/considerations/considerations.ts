@@ -10,6 +10,7 @@
  */
 
 import type { SimulationConfig } from '../../simulation';
+import { lifeStageForAge, isReproductiveStage } from '../../simulation/life-stages';
 import { clamp01, inverseQuadratic, quadratic } from '../utility';
 
 /**
@@ -100,4 +101,79 @@ export function distanceFactorSquared(distanceSquared: number, radiusSquared: nu
  */
 export function explorationUncertainty(averageMemoryValue: number): number {
   return clamp01(1 - averageMemoryValue);
+}
+
+/**
+ * How strongly an agent wants to seek a partner right now (0..1).
+ *
+ * Guarantees from the spec: reproduction is only considered when the agent is
+ * reproductively capable (adult/elderly), and never when it is in a clearly
+ * unsafe survival state. So this is zero unless:
+ *   - it is an adult (or elderly) life stage,
+ *   - health is above `minHealthToReproduce`,
+ *   - energy is above `minEnergyToReproduce`,
+ *   - hunger AND thirst are below `maxNeedToReproduce`.
+ *
+ * The remaining drive is a base drive boosted by fertility (more fertile agents
+ * are more eager) and social tendency, scaled by how much spare survival
+ * capacity the agent has (1 = needs fully comfortable, dropping toward 0 as a
+ * need becomes urgent). All randomness that turns this drive into a decision
+ * lives in the dedicated AI stream, never here.
+ */
+export function reproductionUrgency(
+  ageHours: number,
+  health: number,
+  energy: number,
+  hunger: number,
+  thirst: number,
+  fertility: number,
+  socialTendency: number,
+  config: SimulationConfig,
+): number {
+  const stage = lifeStageForAge(ageHours, config);
+  if (!isReproductiveStage(stage)) return 0;
+  const repro = config.reproduction;
+  if (health < repro.minHealthToReproduce) return 0;
+  if (energy < repro.minEnergyToReproduce) return 0;
+  if (hunger >= repro.maxNeedToReproduce || thirst >= repro.maxNeedToReproduce) return 0;
+
+  // Spare survival capacity: how far from needing to eat/drink/rest the agent is.
+  const wants = Math.max(
+    hungerUrgency(hunger, config),
+    thirstUrgency(thirst, config),
+    fatigueUrgency(energy, config),
+  );
+  const safety = Math.max(0, 1 - wants);
+  const drive =
+    repro.baseDrive + clamp01(fertility) * repro.fertilityDriveBoost + clamp01(socialTendency) * repro.socialDriveBoost;
+  return clamp01(drive * safety);
+}
+
+/**
+ * Desirability of a candidate partner, combined into a [0, 1] score.
+ *
+ * Kin rejection (parent/child/sibling) happens in the candidate filter before
+ * this is called — this function only scores a *valid* candidate. It combines:
+ *   - reachability (nearby preferred),
+ *   - partner health (healthier partners are safer to breed with),
+ *   - partner fertility (more fertile partners likely bear more surviving young),
+ *   - a social compatibility term from the mean social tendency of both agents.
+ *
+ * The exact weight values are mild so no single trait dominates; the map is
+ * deterministic (all operands are floats compared with IEEE-754-exact ops).
+ */
+export function partnerDesirability(
+  distanceSquared: number,
+  radiusSquared: number,
+  candidateHealth: number,
+  candidateFertility: number,
+  socialTendencySelf: number,
+  socialTendencyCandidate: number,
+): number {
+  const distance = distanceFactorSquared(distanceSquared, radiusSquared);
+  const healthFactor = clamp01(candidateHealth / 100);
+  const fertilityFactor = clamp01(candidateFertility);
+  const social = clamp01((socialTendencySelf + socialTendencyCandidate) / 2);
+  const compatibility = 0.35 + 0.65 * social;
+  return distance * (0.5 + 0.5 * healthFactor) * (0.5 + 0.5 * fertilityFactor) * compatibility;
 }

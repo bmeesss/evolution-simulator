@@ -13,7 +13,7 @@ import { createWorld } from '../src/simulation-core/world';
 import type { World } from '../src/simulation-core/world';
 import { Rng } from '../src/simulation-core/rng';
 import { EventLog } from '../src/simulation-core/events';
-import { ResourceIndex } from '../src/simulation-core/ai/perception';
+import { ResourceIndex, AgentIndex } from '../src/simulation-core/ai/perception';
 import { AgentIntent } from '../src/simulation-core/ai/intents';
 import { cloneConfig, DEFAULT_SIMULATION_CONFIG } from '../src/simulation-core/simulation/config';
 import type { SimulationConfig } from '../src/simulation-core/simulation/config';
@@ -41,7 +41,9 @@ export function makeContext(seed = 1, worldSize = 24): MiniContext {
     events,
     rng: Rng.fromSeed(seed),
     aiRng: Rng.fromSeed(seed + 1),
+    reproRng: Rng.fromSeed(seed + 2),
     resourceIndex: new ResourceIndex(world.width, world.height, config.ai.perceptionRadiusTiles),
+    agentIndex: new AgentIndex(world.width, world.height, config.reproduction.partnerSeekRadiusTiles),
     dtHours: config.time.hoursPerTick,
     tick: 0,
   };
@@ -54,7 +56,20 @@ export interface AgentFixture {
   energy?: number;
   health?: number;
   intelligence?: number;
+  strength?: number;
+  speed?: number;
+  fertility?: number;
+  socialTendency?: number;
   intent?: number;
+  ageHours?: number;
+  // Lineage defaults to a founding agent (generation 0, no parents).
+  generation?: number;
+  parentA?: number;
+  parentB?: number;
+  // Reproductive defaults to sex 0 (off) / cooldown 0 / eligibility off.
+  sex?: number;
+  cooldownHours?: number;
+  eligible?: boolean;
 }
 
 export function spawnAgent(
@@ -71,16 +86,26 @@ export function spawnAgent(
     thirst: fixture.thirst ?? 0,
     energy: fixture.energy ?? 100,
   });
-  ecs.age.attach(entity, { ageHours: 0 });
+  ecs.age.attach(entity, { ageHours: fixture.ageHours ?? 0 });
   ecs.health.attach(entity, { current: fixture.health ?? 100 });
   ecs.genome.attach(entity, {
     intelligence: fixture.intelligence ?? 0.5,
-    strength: 0.5,
-    speed: 0.5,
-    fertility: 0.5,
-    socialTendency: 0.5,
+    strength: fixture.strength ?? 0.5,
+    speed: fixture.speed ?? 0.5,
+    fertility: fixture.fertility ?? 0.5,
+    socialTendency: fixture.socialTendency ?? 0.5,
   });
-  ecs.intent.attach(entity, { kind: fixture.intent ?? AgentIntent.Eat, targetX: x, targetY: y });
+  ecs.lineage.attach(entity, {
+    generation: fixture.generation ?? 0,
+    parentA: fixture.parentA ?? -1,
+    parentB: fixture.parentB ?? -1,
+  });
+  ecs.reproductive.attach(entity, {
+    sex: fixture.sex ?? 0,
+    cooldownHours: fixture.cooldownHours ?? 0,
+    eligible: fixture.eligible === true ? 1 : 0,
+  });
+  ecs.intent.attach(entity, { kind: fixture.intent ?? AgentIntent.Eat, targetX: x, targetY: y, targetEntity: -1 });
   ecs.aiState.attach(entity);
   return entity;
 }

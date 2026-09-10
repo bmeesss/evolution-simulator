@@ -16,7 +16,8 @@
  *
  * Movement vs. non-movement intents: Eat/Drink/Rest are stationary (their
  * target is where the agent already stands); the movement system only acts on
- * kinds returned by `isMovementIntent`.
+ * kinds returned by `isMovementIntent`. SeekPartner is a movement intent: the
+ * agent travels toward its chosen partner's position (targetEntity).
  */
 
 export const AgentIntent = {
@@ -32,14 +33,16 @@ export const AgentIntent = {
   Eat: 4,
   /** Drink water at the agent's current tile (no movement). */
   Drink: 5,
+  /** Seek a nearby reproductively-eligible partner (targetEntity = partner). */
+  SeekPartner: 6,
 } as const;
 
 export type AgentIntent = (typeof AgentIntent)[keyof typeof AgentIntent];
 
 /** Number of distinct intents (kept explicit so callers can pre-size buffers). */
-export const INTENT_COUNT = 6;
+export const INTENT_COUNT = 7;
 
-const NAMES: readonly string[] = ['rest', 'wander', 'seek-food', 'seek-water', 'eat', 'drink'];
+const NAMES: readonly string[] = ['rest', 'wander', 'seek-food', 'seek-water', 'eat', 'drink', 'seek-partner'];
 
 /** Human-readable name for an intent kind (used in the agent inspector UI). */
 export function intentName(kind: number): string {
@@ -48,5 +51,10 @@ export function intentName(kind: number): string {
 
 /** True for intents the movement system should act on (travel toward target). */
 export function isMovementIntent(kind: number): boolean {
-  return kind === AgentIntent.Wander || kind === AgentIntent.SeekFood || kind === AgentIntent.SeekWater;
+  return (
+    kind === AgentIntent.Wander ||
+    kind === AgentIntent.SeekFood ||
+    kind === AgentIntent.SeekWater ||
+    kind === AgentIntent.SeekPartner
+  );
 }
