@@ -5,20 +5,23 @@ on a fixed timestep inside a **Web Worker**, rendered with **Canvas 2D** — no
 game engine, no backend, no simulation framework.
 
 This repository currently contains **Phase 1 (the deterministic foundation),
-Phase 2 (Utility AI, survival and individual learning) and Phase 3 (Evolution:
-reproduction, inheritance and natural selection)**. The world, agents, needs,
-movement, Utility AI decisions, eating/drinking, memory, death and now **sexual
-reproduction with genetic inheritance and mutation** are all proven reproducible
-from a seed. Natural selection emerges from survival and breeding — there is no
-scripted fitness function. Later phases (see the phase plan in
-[ARCHITECTURE.md](ARCHITECTURE.md)) may add societies/civilization, but the
-evolution ladder is in place.
+Phase 2 (Utility AI, survival and individual learning), Phase 3 (Evolution:
+reproduction, inheritance and natural selection) and Phase 4 (Social
+evolution: relationships, cooperation, competition and emergent groups)**. The
+world, agents, needs, movement, Utility AI decisions, eating/drinking, memory,
+death, **sexual reproduction with genetic inheritance and mutation** and the
+**social layer** are all proven reproducible from a seed. Natural selection
+emerges from survival and breeding — there is no scripted fitness function —
+and social behavior affects it only indirectly. The civilization ladder
+(culture, language, technology, economy, warfare, cities) is explicitly out of
+scope; see the phase plan in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## What you see
 
 - A 64×64 tile world generated from a seed (terrain, food, water, temperature)
 - 50 agents that **decide what to do each tick**: rest, wander/explore, seek
-  food, seek water, eat, drink or **seek a partner** — scored with bounded
+  food, seek water, eat, drink, **seek a partner** — or, since Phase 4,
+  **socialize, help, cooperate, avoid or confront** — scored with bounded
   utility curves and deterministic tie-breaking
 - Agents get hungry/thirsty/tired, spend energy while active, restore it while
   resting, take health damage when needs stay critical, and **die** when health
@@ -32,11 +35,30 @@ evolution ladder is in place.
 - Food/water are consumed and regrow toward their per-tile caps; agents
   **remember** resource locations (bounded per-agent memory that decays unless
   re-confirmed) and **learn faster / forget slower** with higher intelligence
+- **Social life (Phase 4)**: agents build directed relationships (score,
+  trust and familiarity are separate axes) through socializing, helping and
+  cooperative foraging sessions; they recognize kin (parents/siblings) and
+  mildly favor them. Social memory is bounded per agent — an agent remembers
+  at most ~16 others, forgetting the weakest
+- **Competition and conflict are emergent, never scripted**: a forager that
+  finds its patch stripped blames a nearby competitor (preferring whoever it
+  already blames — hostile attribution), grudges deepen under repeated
+  competition, slowly heal with time, and only hunger plus a deep grudge plus
+  a strength edge ever makes an agent *confront*. In the default rich world
+  the chain never gets that far: agents socialize, cooperate and form groups
+  without a single fight
+- **Groups emerge** from the actual social graph (mutual bonds + proximity,
+  detected once per in-game day): membership is each agent's own utility
+  decision, groups keep a stable identity across splits and merges, and
+  isolated agents stay isolated
 - Statistics (population, births, deaths, max generation, needs, genome & trait
-  averages, trait distributions, resource availability), a selected-agent
-  inspector (life stage, generation, parents, sex, reproduction cooldown, full
-  genome, per-gene inheritance origins, live Utility AI table, memory lists), a
-  history graph, an event feed and a development overlay
+  averages, trait distributions, resource availability, social aggregates), a
+  selected-agent inspector (life stage, generation, parents, sex, reproduction
+  cooldown, full genome, per-gene inheritance origins, live twelve-action
+  Utility AI table, memory lists, group membership, top relationships with
+  score/trust/familiarity), a **groups panel** (count, sizes, cohesion, key
+  members — click a group to inspect it), a history graph, an event feed and a
+  development overlay
 - A development overlay with tick rate, worker status, render FPS and
   simulation timing
 
@@ -52,6 +74,12 @@ evolution ladder is in place.
 | Blue ring | (intent) | currently drinking |
 | Pink ring | (intent) | currently seeking a partner |
 | Amber dot | (intent) | currently wandering / exploring |
+| Violet ring | (intent) | currently socializing |
+| Teal ring | (intent) | currently helping |
+| Orange dashed link | (intent) | active cooperation session (drawn between partners) |
+| Red ring | (intent) | currently avoiding a feared rival |
+| Red flash | (state) | recent conflict loser |
+| Golden dashed ring + faint territory circle | (state) | group member (hue from a stable group color) |
 
 The intent ring is drawn just outside the body; the speed ring just inside it, so
 the two never overlap. Food is shown as a green tint on land tiles (denser green
@@ -113,6 +141,17 @@ The suite includes:
   mortality, fresh-memory children, and whole-run reproduction that neither
   explodes nor collapses; plus trait-distribution / evolution statistics and a
   partner-search performance regression (linear, not quadratic, in population)
+- **Phase-4 social tests** — relationship store bounds/eviction/round-trip,
+  kinship recognition and seeding, socialize/help/cooperate/confront mechanics
+  (costs, reciprocity, cooldowns, knockback), resentment with hostile
+  attribution and kin dampening, hostility decay (grudges fade, never lock),
+  group formation/persistence/split/merge/cleanup with deterministic stable
+  IDs, dead-agent social cleanup, confront utility calibration, the peaceful
+  baseline vs. controlled-famine emergence contrast (scarcity → competition →
+  resentment → hostility → confront → conflict, with zero conflict in the
+  default world), social determinism (identical histories from identical
+  seeds) and social performance regressions (near-linear per-tick cost from
+  50 to 1000 agents, bounded relationship storage, periodic group detection)
 - Worker engine tests (fixed timestep, pause/speed, message protocol) against
   the real worker entry module
 - **Source hygiene tests** — fail if `Math.random` appears anywhere in `src/`,

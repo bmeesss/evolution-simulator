@@ -21,12 +21,40 @@ import { intentName, ResourceType, ACTION_NAMES } from '../simulation-core';
 import { GENOME_KEYS } from '../simulation-core/genetics';
 import type { GenomeValues } from '../simulation-core/genetics';
 import { lifeStageForAge, lifeStageName } from '../simulation-core/simulation/life-stages';
+import type { SimulationEvent } from '../simulation-core';
 
 /** Bump when the snapshot layout changes incompatibly. */
-export const SNAPSHOT_FORMAT_VERSION = 3;
+export const SNAPSHOT_FORMAT_VERSION = 4;
 
 /** Number of bins used for trait distributions (each covers 1/BIN_COUNT of [0,1]). */
 export const TRAIT_DISTRIBUTION_BINS = 10;
+
+/**
+ * aiState columns in ActionKind order — the "Action | Utility" debug table is
+ * built from these. MUST stay aligned with ACTION_NAMES (ai/actions).
+ */
+const AI_UTILITY_COLUMNS: ReadonlyArray<
+  'rest' | 'wander' | 'seekFood' | 'seekWater' | 'eat' | 'drink' | 'seekPartner' | 'socialize' | 'help' | 'cooperate' | 'avoid' | 'confront'
+> = [
+  'rest',
+  'wander',
+  'seekFood',
+  'seekWater',
+  'eat',
+  'drink',
+  'seekPartner',
+  'socialize',
+  'help',
+  'cooperate',
+  'avoid',
+  'confront',
+];
+
+/** How long a conflict remains visible as a red flash (ticks). */
+export const CONFLICT_FLASH_TICKS = 24;
+
+/** Maximum groups listed individually in a snapshot (aggregates cover all). */
+export const MAX_GROUPS_IN_SNAPSHOT = 24;
 
 /** Per-frame agent data for rendering (SoA, structured-clone friendly). */
 export interface AgentVisualSnapshot {
@@ -41,6 +69,12 @@ export interface AgentVisualSnapshot {
   readonly speed: Float32Array;
   /** Current intent kind (AgentIntent values) — drives the state indicator. */
   readonly intentKind: Uint8Array;
+  /** Emergent group id per agent (-1 = ungrouped) — drives the group ring. */
+  readonly groupId: Int32Array;
+  /** Cooperation-session partner per agent (-1 = none) — draws the bond link. */
+  readonly cooperationTarget: Int32Array;
+  /** 1 while a recent conflict should still flash red. */
+  readonly conflictFlash: Uint8Array;
 }
 
 export interface SimulationAverages {
@@ -87,6 +121,51 @@ export interface SimulationSnapshot {
   readonly resources: ResourceAvailability;
   readonly distributions: TraitDistribution;
   readonly agents: AgentVisualSnapshot;
+  /** Social statistics (Phase 4). */
+  readonly social: SocialSnapshotStats;
+  /** Emergent group summary (Phase 4). */
+  readonly groups: GroupsSnapshot;
+}
+
+/** Global social statistics derived from live state (Phase 4). */
+export interface SocialSnapshotStats {
+  /** Number of stored (directed) relationships. */
+  readonly activeRelationships: number;
+  /** Mean relationship score over all entries (−1..1). */
+  readonly averageRelationshipScore: number;
+  /** Mean trust over all entries (0..1). */
+  readonly averageTrust: number;
+  /** Cumulative counters (persisted simulation state). */
+  readonly helpEvents: number;
+  readonly cooperationEvents: number;
+  readonly conflictEvents: number;
+}
+
+/** One group row in the snapshot (aggregates cover groups beyond the cap). */
+export interface GroupSnapshotEntry {
+  readonly id: number;
+  readonly memberCount: number;
+  readonly centerX: number;
+  readonly centerY: number;
+  readonly radius: number;
+  readonly cohesion: number;
+  readonly createdTick: number;
+  /** Split lineage: parent group id (-1 spontaneous) and generation depth. */
+  readonly parentId: number;
+  readonly generation: number;
+}
+
+export interface GroupsSnapshot {
+  readonly count: number;
+  readonly largestSize: number;
+  /** Smallest size among groups that survived >= 2 detection runs. */
+  readonly smallestStableSize: number;
+  readonly averageSize: number;
+  /** Alive agents not in any group. */
+  readonly isolatedAgents: number;
+  readonly averageCohesion: number;
+  /** Largest groups first (tie: lower id), capped at MAX_GROUPS_IN_SNAPSHOT. */
+  readonly list: readonly GroupSnapshotEntry[];
 }
 
 /** A remembered location, as shown in the agent inspector. */
@@ -145,7 +224,76 @@ export interface AgentDetails {
   readonly memoryWater: readonly AgentMemoryEntryDetails[];
   /** Base utility scores from the last AI pass (dev-only debugging). */
   readonly aiUtilities: readonly AiUtilityEntry[];
+  /** Phase 4 — social inspection. */
+  readonly loneliness: number;
+  readonly groupId: number;
+  readonly groupCohesion: number;
+  readonly groupAgeTicks: number;
+  /** Members of the agent's group (including itself), 0 when ungrouped. */
+  readonly groupMemberCount: number;
+  readonly cooperationPartner: number;
+  readonly cooperationProgress: number;
+  readonly cooperationDuration: number;
+  readonly forageBonusActive: boolean;
+  /** Strongest remembered relationships (by familiarity + |score|), bounded. */
+  readonly relationships: readonly AgentRelationshipDetails[];
 }
+
+/** One remembered relationship, as shown in the agent inspector. */
+export interface AgentRelationshipDetails {
+  readonly target: number;
+  readonly score: number;
+  readonly trust: number;
+  readonly familiarity: number;
+  readonly kin: boolean;
+  readonly positiveCount: number;
+  readonly negativeCount: number;
+  readonly lastInteractionTick: number;
+  /** True when the remembered agent is still alive. */
+  readonly alive: boolean;
+}
+
+/** How many relationships the inspector lists (bounded, top-N only). */
+export const MAX_INSPECTOR_RELATIONSHIPS = 6;
+
+/** Full inspection data for one group (Phase 4, built on demand). */
+export interface GroupDetails {
+  readonly id: number;
+  readonly memberCount: number;
+  /** Member entity ids, ascending (groups are small). */
+  readonly members: readonly number[];
+  readonly centerX: number;
+  readonly centerY: number;
+  readonly radius: number;
+  readonly cohesion: number;
+  readonly createdTick: number;
+  readonly parentId: number;
+  readonly generation: number;
+  readonly stableRuns: number;
+  readonly foodAccess: number;
+  readonly waterAccess: number;
+  readonly averageTraits: Readonly<Record<keyof GenomeValues, number>>;
+  /** Strongest intra-group relationships (top-N by score). */
+  readonly topRelationships: readonly GroupRelationshipDetails[];
+  /** Recent group-relevant events from the bounded log. */
+  readonly recentEvents: readonly SimulationEvent[];
+}
+
+/** One intra-group relationship row in the group inspector. */
+export interface GroupRelationshipDetails {
+  readonly a: number;
+  readonly b: number;
+  readonly score: number;
+  readonly trust: number;
+  readonly familiarity: number;
+  readonly kin: boolean;
+}
+
+/** How many intra-group relationships the inspector lists. */
+export const MAX_INSPECTOR_GROUP_RELATIONSHIPS = 8;
+
+/** How many recent events the group inspector lists. */
+export const MAX_INSPECTOR_GROUP_EVENTS = 10;
 
 function emptyDistribution(): number[] {
   return new Array<number>(TRAIT_DISTRIBUTION_BINS).fill(0);
@@ -166,6 +314,8 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   const intent = sim.ecs.intent;
   const age = sim.ecs.age;
   const lineage = sim.ecs.lineage;
+  const socialStore = sim.ecs.social;
+  const relationships = sim.ecs.relationships;
   const count = position.count;
 
   const ids = new Uint32Array(count);
@@ -175,6 +325,9 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   const intelligence = new Float32Array(count);
   const speed = new Float32Array(count);
   const intentKind = new Uint8Array(count);
+  const groupId = new Int32Array(count);
+  const cooperationTarget = new Int32Array(count);
+  const conflictFlash = new Uint8Array(count);
 
   const distIntelligence = emptyDistribution();
   const distStrength = emptyDistribution();
@@ -192,6 +345,7 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   let healthSum = 0;
   let ageSum = 0;
   let maxGeneration = 0;
+  let isolatedAgents = 0;
 
   for (let i = 0; i < count; i++) {
     const entity = position.entityOf[i];
@@ -229,6 +383,23 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
     }
     const intentSlot = intent.index[entity];
     intentKind[i] = intentSlot >= 0 ? intent.columns.kind[intentSlot] : 0;
+    // Social columns (agent without a social component renders as ungrouped).
+    const socialSlot = socialStore.index[entity];
+    if (socialSlot >= 0) {
+      const group = socialStore.columns.groupId[socialSlot];
+      groupId[i] = group;
+      if (group < 0) isolatedAgents++;
+      cooperationTarget[i] = socialStore.columns.cooperationTarget[socialSlot];
+      conflictFlash[i] =
+        socialStore.columns.lastConflictTick[socialSlot] > 0 &&
+        sim.tick - socialStore.columns.lastConflictTick[socialSlot] < CONFLICT_FLASH_TICKS
+          ? 1
+          : 0;
+    } else {
+      groupId[i] = -1;
+      cooperationTarget[i] = -1;
+      isolatedAgents++;
+    }
   }
 
   const averages: SimulationAverages =
@@ -269,6 +440,68 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
   const resources: ResourceAvailability =
     worldSize > 0 ? { food: foodSum / worldSize, water: waterSum / worldSize } : { food: 0, water: 0 };
 
+  // Social statistics: derived from the live relationship store + counters.
+  // Walks chains directly (no serialization, no per-entry objects).
+  let relationshipCount = 0;
+  let scoreSum = 0;
+  let trustSum = 0;
+  const aliveIds = sim.ecs.entities.aliveIds;
+  const aliveCount = sim.ecs.entities.aliveCount;
+  for (let k = 0; k < aliveCount; k++) {
+    const entity = aliveIds[k];
+    for (let e = relationships.headOf(entity); e !== -1; e = relationships.nextOf(e)) {
+      relationshipCount++;
+      scoreSum += relationships.scoreOf(e);
+      trustSum += relationships.trustOf(e);
+    }
+  }
+  const social: SocialSnapshotStats = {
+    activeRelationships: relationshipCount,
+    averageRelationshipScore: relationshipCount === 0 ? 0 : scoreSum / relationshipCount,
+    averageTrust: relationshipCount === 0 ? 0 : trustSum / relationshipCount,
+    helpEvents: sim.socialStats.helpEvents,
+    cooperationEvents: sim.socialStats.cooperationEvents,
+    conflictEvents: sim.socialStats.conflictEvents,
+  };
+
+  // Group summary: aggregates over every group, list of the largest ones.
+  const allGroups = sim.groups.groups;
+  let largestSize = 0;
+  let smallestStableSize = Number.POSITIVE_INFINITY;
+  let sizeSum = 0;
+  let cohesionSum = 0;
+  for (const group of allGroups) {
+    sizeSum += group.members.length;
+    if (group.members.length > largestSize) largestSize = group.members.length;
+    if (group.stableRuns >= 2 && group.members.length < smallestStableSize) {
+      smallestStableSize = group.members.length;
+    }
+    cohesionSum += group.cohesion;
+  }
+  const listed = [...allGroups]
+    .sort((a, b) => b.members.length - a.members.length || a.id - b.id)
+    .slice(0, MAX_GROUPS_IN_SNAPSHOT)
+    .map((group) => ({
+      id: group.id,
+      memberCount: group.members.length,
+      centerX: group.centerX,
+      centerY: group.centerY,
+      radius: group.radius,
+      cohesion: group.cohesion,
+      createdTick: group.createdTick,
+      parentId: group.parentId,
+      generation: group.generation,
+    }));
+  const groups: GroupsSnapshot = {
+    count: allGroups.length,
+    largestSize,
+    smallestStableSize: smallestStableSize === Number.POSITIVE_INFINITY ? 0 : smallestStableSize,
+    averageSize: allGroups.length === 0 ? 0 : sizeSum / allGroups.length,
+    isolatedAgents,
+    averageCohesion: allGroups.length === 0 ? 0 : cohesionSum / allGroups.length,
+    list: listed,
+  };
+
   return {
     formatVersion: SNAPSHOT_FORMAT_VERSION,
     tick: sim.tick,
@@ -286,7 +519,9 @@ export function buildSimulationSnapshot(sim: Simulation): SimulationSnapshot {
       speed: distSpeed,
       fertility: distFertility,
     },
-    agents: { ids, x, y, strength, intelligence, speed, intentKind },
+    agents: { ids, x, y, strength, intelligence, speed, intentKind, groupId, cooperationTarget, conflictFlash },
+    social,
+    groups,
   };
 }
 
@@ -318,6 +553,7 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
   const aiSlot = ecs.aiState.index[entityId];
   const lineageSlot = ecs.lineage.index[entityId];
   const reproSlot = ecs.reproductive.index[entityId];
+  const socialSlot = ecs.social.index[entityId];
   if (
     positionSlot < 0 ||
     needsSlot < 0 ||
@@ -326,7 +562,8 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
     genomeSlot < 0 ||
     intentSlot < 0 ||
     lineageSlot < 0 ||
-    reproSlot < 0
+    reproSlot < 0 ||
+    socialSlot < 0
   ) {
     return null;
   }
@@ -344,17 +581,13 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
     else memoryWater.push(entry);
   }
 
-  const aiUtilities: AiUtilityEntry[] = aiSlot >= 0
-    ? [
-        { action: ACTION_NAMES[0], utility: ecs.aiState.columns.rest[aiSlot] },
-        { action: ACTION_NAMES[1], utility: ecs.aiState.columns.wander[aiSlot] },
-        { action: ACTION_NAMES[2], utility: ecs.aiState.columns.seekFood[aiSlot] },
-        { action: ACTION_NAMES[3], utility: ecs.aiState.columns.seekWater[aiSlot] },
-        { action: ACTION_NAMES[4], utility: ecs.aiState.columns.eat[aiSlot] },
-        { action: ACTION_NAMES[5], utility: ecs.aiState.columns.drink[aiSlot] },
-        { action: ACTION_NAMES[6], utility: ecs.aiState.columns.seekPartner[aiSlot] },
-      ]
-    : [];
+  const aiUtilities: AiUtilityEntry[] =
+    aiSlot >= 0
+      ? AI_UTILITY_COLUMNS.map((column, index) => ({
+          action: ACTION_NAMES[index],
+          utility: ecs.aiState.columns[column][aiSlot],
+        }))
+      : [];
 
   // Gene origins: for each gene, classify how the child's allele was formed by
   // comparing to the (still-alive) parents' alleles. Parent values are null when
@@ -380,6 +613,33 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
 
   const generation = ecs.lineage.columns.generation[lineageSlot];
   const sex = ecs.reproductive.columns.sex[reproSlot];
+
+  // Social inspection: strongest relationships first (familiarity + |score|),
+  // bounded to MAX_INSPECTOR_RELATIONSHIPS — only for the selected agent.
+  const relationships = ecs.relationships;
+  const relationshipList: AgentRelationshipDetails[] = [];
+  for (let e = relationships.headOf(entityId); e !== -1; e = relationships.nextOf(e)) {
+    const score = relationships.scoreOf(e);
+    relationshipList.push({
+      target: relationships.targetOf(e),
+      score,
+      trust: relationships.trustOf(e),
+      familiarity: relationships.familiarityOf(e),
+      kin: relationships.kinOf(e),
+      positiveCount: relationships.positiveCountOf(e),
+      negativeCount: relationships.negativeCountOf(e),
+      lastInteractionTick: relationships.lastInteractionTickOf(e),
+      alive: ecs.entities.isAlive(relationships.targetOf(e)),
+    });
+  }
+  relationshipList.sort(
+    (a, b) =>
+      b.familiarity + Math.abs(b.score) - (a.familiarity + Math.abs(a.score)) || a.target - b.target,
+  );
+  const topRelationships = relationshipList.slice(0, MAX_INSPECTOR_RELATIONSHIPS);
+
+  const groupId = ecs.social.columns.groupId[socialSlot];
+  const group = groupId >= 0 ? sim.groups.get(groupId) : null;
 
   return {
     entityId,
@@ -409,5 +669,94 @@ export function buildAgentDetails(sim: Simulation, entityId: EntityId): AgentDet
     memoryFood,
     memoryWater,
     aiUtilities,
+    loneliness: ecs.social.columns.loneliness[socialSlot],
+    groupId,
+    groupCohesion: group ? group.cohesion : 0,
+    groupAgeTicks: group ? sim.tick - group.createdTick : 0,
+    groupMemberCount: group ? group.members.length : 0,
+    cooperationPartner: ecs.social.columns.cooperationTarget[socialSlot],
+    cooperationProgress: ecs.social.columns.cooperationTicks[socialSlot],
+    cooperationDuration: sim.config.social.cooperation.durationTicks,
+    forageBonusActive: ecs.social.columns.forageBonusTicks[socialSlot] > 0,
+    relationships: topRelationships,
+  };
+}
+
+/** Extract full details for one group, or null if it does not exist. */
+export function buildGroupDetails(sim: Simulation, groupId: number): GroupDetails | null {
+  const group = sim.groups.get(groupId);
+  if (!group) return null;
+  const ecs = sim.ecs;
+
+  // Average traits over (alive) members.
+  const traitSums: Record<keyof GenomeValues, number> = {
+    intelligence: 0,
+    strength: 0,
+    speed: 0,
+    fertility: 0,
+    socialTendency: 0,
+  };
+  let genomeMembers = 0;
+  for (const member of group.members) {
+    const slot = ecs.genome.index[member];
+    if (slot < 0) continue;
+    genomeMembers++;
+    for (const key of GENOME_KEYS) {
+      traitSums[key] += ecs.genome.columns[key][slot];
+    }
+  }
+  const averageTraits = { ...traitSums };
+  if (genomeMembers > 0) {
+    for (const key of GENOME_KEYS) {
+      averageTraits[key] = traitSums[key] / genomeMembers;
+    }
+  }
+
+  // Strongest intra-group relationships (both directions count once per pair).
+  const memberSet = new Set(group.members);
+  const pairs: GroupRelationshipDetails[] = [];
+  for (const member of group.members) {
+    for (let e = ecs.relationships.headOf(member); e !== -1; e = ecs.relationships.nextOf(e)) {
+      const target = ecs.relationships.targetOf(e);
+      if (!memberSet.has(target) || target <= member) continue; // each pair once
+      pairs.push({
+        a: member,
+        b: target,
+        score: ecs.relationships.scoreOf(e),
+        trust: ecs.relationships.trustOf(e),
+        familiarity: ecs.relationships.familiarityOf(e),
+        kin: ecs.relationships.kinOf(e),
+      });
+    }
+  }
+  pairs.sort((a, b) => b.score - a.score || a.a - b.a || a.b - b.b);
+  const topRelationships = pairs.slice(0, MAX_INSPECTOR_GROUP_RELATIONSHIPS);
+
+  // Recent group-relevant events (bounded log scan, group events only).
+  const recentEvents: SimulationEvent[] = [];
+  for (const event of sim.events.recent(200)) {
+    if (event.groupId === groupId) {
+      recentEvents.push(event);
+      if (recentEvents.length >= MAX_INSPECTOR_GROUP_EVENTS) break;
+    }
+  }
+
+  return {
+    id: group.id,
+    memberCount: group.members.length,
+    members: [...group.members].sort((a, b) => a - b),
+    centerX: group.centerX,
+    centerY: group.centerY,
+    radius: group.radius,
+    cohesion: group.cohesion,
+    createdTick: group.createdTick,
+    parentId: group.parentId,
+    generation: group.generation,
+    stableRuns: group.stableRuns,
+    foodAccess: group.foodAccess,
+    waterAccess: group.waterAccess,
+    averageTraits,
+    topRelationships,
+    recentEvents,
   };
 }

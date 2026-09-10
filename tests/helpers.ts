@@ -1,5 +1,5 @@
 /**
- * Shared helpers for phase-2 system-level tests.
+ * Shared helpers for phase-2+ system-level tests.
  *
  * Systems are plain `(ctx: TickContext) => void` functions, so they can be
  * exercised in isolation with a hand-built context — no full Simulation run
@@ -15,6 +15,7 @@ import { Rng } from '../src/simulation-core/rng';
 import { EventLog } from '../src/simulation-core/events';
 import { ResourceIndex, AgentIndex } from '../src/simulation-core/ai/perception';
 import { AgentIntent } from '../src/simulation-core/ai/intents';
+import { GroupRegistry, createSocialStats } from '../src/simulation-core/social';
 import { cloneConfig, DEFAULT_SIMULATION_CONFIG } from '../src/simulation-core/simulation/config';
 import type { SimulationConfig } from '../src/simulation-core/simulation/config';
 import type { TickContext } from '../src/simulation-core/simulation/tick-context';
@@ -25,6 +26,7 @@ export interface MiniContext {
   world: World;
   ecs: SimulationEcs;
   events: EventLog;
+  groups: GroupRegistry;
 }
 
 export function makeContext(seed = 1, worldSize = 24): MiniContext {
@@ -32,8 +34,9 @@ export function makeContext(seed = 1, worldSize = 24): MiniContext {
   config.world.width = worldSize;
   config.world.height = worldSize;
   const world = createWorld(seed, config.world);
-  const ecs = new SimulationEcs(config.memory.capacity);
+  const ecs = new SimulationEcs(config.memory.capacity, config.social.memory.capacity);
   const events = new EventLog(() => ({ tick: 0, timeHours: 0 }));
+  const groups = new GroupRegistry();
   const ctx: TickContext = {
     ecs,
     world,
@@ -44,10 +47,13 @@ export function makeContext(seed = 1, worldSize = 24): MiniContext {
     reproRng: Rng.fromSeed(seed + 2),
     resourceIndex: new ResourceIndex(world.width, world.height, config.ai.perceptionRadiusTiles),
     agentIndex: new AgentIndex(world.width, world.height, config.reproduction.partnerSeekRadiusTiles),
+    socialIndex: new AgentIndex(world.width, world.height, config.social.perception.radiusTiles),
+    groups,
+    socialStats: createSocialStats(),
     dtHours: config.time.hoursPerTick,
     tick: 0,
   };
-  return { ctx, config, world, ecs, events };
+  return { ctx, config, world, ecs, events, groups };
 }
 
 export interface AgentFixture {
@@ -61,6 +67,9 @@ export interface AgentFixture {
   fertility?: number;
   socialTendency?: number;
   intent?: number;
+  targetX?: number;
+  targetY?: number;
+  targetEntity?: number;
   ageHours?: number;
   // Lineage defaults to a founding agent (generation 0, no parents).
   generation?: number;
@@ -70,6 +79,13 @@ export interface AgentFixture {
   sex?: number;
   cooldownHours?: number;
   eligible?: boolean;
+  // Social defaults: ungrouped, content, no cooperation session.
+  loneliness?: number;
+  groupId?: number;
+  cooperationTarget?: number;
+  cooperationTicks?: number;
+  forageBonusTicks?: number;
+  lastConflictTick?: number;
 }
 
 export function spawnAgent(
@@ -105,7 +121,21 @@ export function spawnAgent(
     cooldownHours: fixture.cooldownHours ?? 0,
     eligible: fixture.eligible === true ? 1 : 0,
   });
-  ecs.intent.attach(entity, { kind: fixture.intent ?? AgentIntent.Eat, targetX: x, targetY: y, targetEntity: -1 });
+  ecs.intent.attach(entity, {
+    kind: fixture.intent ?? AgentIntent.Eat,
+    targetX: fixture.targetX ?? x,
+    targetY: fixture.targetY ?? y,
+    targetEntity: fixture.targetEntity ?? -1,
+  });
   ecs.aiState.attach(entity);
+  ecs.social.attach(entity, {
+    loneliness: fixture.loneliness ?? 0,
+    groupId: fixture.groupId ?? -1,
+    groupJoinTick: 0,
+    cooperationTarget: fixture.cooperationTarget ?? -1,
+    cooperationTicks: fixture.cooperationTicks ?? 0,
+    forageBonusTicks: fixture.forageBonusTicks ?? 0,
+    lastConflictTick: fixture.lastConflictTick ?? 0,
+  });
   return entity;
 }

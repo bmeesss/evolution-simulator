@@ -57,9 +57,19 @@ export function spawnInitialAgents(
     ecs.reproductive.attach(entity, { sex: rng.nextInt(2), cooldownHours: 0, eligible: 0 });
     // Wander with the target on the agent itself: the Utility AI picks a real
     // target on the first tick (keeps target-picking in the AI).
-    ecs.intent.attach(entity, { kind: AgentIntent.Wander, targetX: tileX, targetY: tileY });
+    ecs.intent.attach(entity, { kind: AgentIntent.Wander, targetX: tileX, targetY: tileY, targetEntity: -1 });
     // AI debug state (utility scores) starts at zero; filled every tick.
     ecs.aiState.attach(entity);
+    // Social state starts ungrouped and content; loneliness grows from here.
+    ecs.social.attach(entity, {
+      loneliness: 0,
+      groupId: -1,
+      groupJoinTick: 0,
+      cooperationTarget: -1,
+      cooperationTicks: 0,
+      forageBonusTicks: 0,
+      lastConflictTick: 0,
+    });
 
     events.record('agent_spawned', { entityId: entity });
   }

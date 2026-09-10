@@ -130,12 +130,19 @@ describe('utility AI integration', () => {
     expect(aiState.count).toBe(sim.population);
     for (let i = 0; i < aiState.count; i++) {
       for (const column of [
+        // All twelve action columns: survival (7) + social (5, Phase 4).
         aiState.columns.rest,
         aiState.columns.wander,
         aiState.columns.seekFood,
         aiState.columns.seekWater,
         aiState.columns.eat,
         aiState.columns.drink,
+        aiState.columns.seekPartner,
+        aiState.columns.socialize,
+        aiState.columns.help,
+        aiState.columns.cooperate,
+        aiState.columns.avoid,
+        aiState.columns.confront,
       ]) {
         expect(column[i]).toBeGreaterThanOrEqual(0);
         expect(column[i]).toBeLessThanOrEqual(1);

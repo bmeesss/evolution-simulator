@@ -21,6 +21,9 @@ import {
   moveMarkerColor,
   isRestingIntent,
   RESTING_ALPHA,
+  groupColor,
+  conflictFlashColor,
+  cooperationLinkColor,
 } from './agent-visuals';
 
 // Terrain palette (RGB). Named per terrain type; food tints land tiles.
@@ -59,6 +62,9 @@ export class WorldRenderer {
   private offsetY = 0;
   private cssWidth = 0;
   private cssHeight = 0;
+  /** Per-snapshot entity-id -> index cache (rebuilt only on new snapshots). */
+  private mapForAgents: AgentVisualSnapshot | null = null;
+  private agentMap = new Map<number, number>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -128,7 +134,77 @@ export class WorldRenderer {
     );
 
     if (!snapshot) return;
+    this.drawGroupTerritories(snapshot);
+    this.drawCooperationLinks(snapshot.agents);
     this.drawAgents(snapshot.agents, selectedEntityId);
+  }
+
+  /**
+   * Approximate group territories: a faint filled circle + dashed outline at
+   * each group's activity center. Informational (Phase 4 keeps territory
+   * passive — no warfare), but it makes emergent communities visible at a
+   * glance. Cheap: at most a couple dozen circles per frame.
+   */
+  private drawGroupTerritories(snapshot: SimulationSnapshot): void {
+    const ctx = this.ctx;
+    const tile = this.tileSize;
+    for (const group of snapshot.groups.list) {
+      if (group.radius <= 0 || group.memberCount < 2) continue;
+      const color = groupColor(group.id);
+      const x = this.offsetX + group.centerX * tile;
+      const y = this.offsetY + group.centerY * tile;
+      const radius = Math.max(tile, group.radius * tile);
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.05;
+      ctx.fill();
+      ctx.globalAlpha = 0.35;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /**
+   * Cooperation bonds: a thin line from each cooperating agent to its session
+   * partner. Each pair is drawn once (only from the lower entity id).
+   */
+  private drawCooperationLinks(agents: AgentVisualSnapshot): void {
+    const ctx = this.ctx;
+    const tile = this.tileSize;
+    const map = this.agentIndexMap(agents);
+    for (let i = 0; i < agents.ids.length; i++) {
+      const target = agents.cooperationTarget[i];
+      if (target < 0) continue;
+      if (agents.ids[i] > target) continue; // draw each pair once
+      const j = map.get(target);
+      if (j === undefined) continue; // partner left/died since the snapshot
+      const x1 = this.offsetX + agents.x[i] * tile;
+      const y1 = this.offsetY + agents.y[i] * tile;
+      const x2 = this.offsetX + agents.x[j] * tile;
+      const y2 = this.offsetY + agents.y[j] * tile;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = cooperationLinkColor();
+      ctx.stroke();
+    }
+  }
+
+  /** entity id -> snapshot index, rebuilt only when the snapshot changes. */
+  private agentIndexMap(agents: AgentVisualSnapshot): Map<number, number> {
+    if (this.mapForAgents !== agents) {
+      const map = new Map<number, number>();
+      for (let i = 0; i < agents.ids.length; i++) map.set(agents.ids[i], i);
+      this.mapForAgents = agents;
+      this.agentMap = map;
+    }
+    return this.agentMap;
   }
 
   private drawAgents(agents: AgentVisualSnapshot, selectedEntityId: number | null): void {
@@ -165,7 +241,8 @@ export class WorldRenderer {
       }
 
       // Intent ring for a concrete interaction (eat green / drink blue /
-      // seek-partner pink) drawn just outside the body.
+      // seek-partner pink / social teal / help light-green / cooperate violet /
+      // avoid gray / confront red) drawn just outside the body.
       const ringColor = intentIndicatorColor(kind);
       if (ringColor !== null) {
         ctx.beginPath();
@@ -185,6 +262,31 @@ export class WorldRenderer {
         ctx.fill();
       }
       ctx.globalAlpha = 1;
+
+      // Phase 4: group affiliation — a thin dashed outer ring in the group's
+      // deterministic color.
+      const groupId = agents.groupId[i];
+      if (groupId >= 0) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius + Math.max(2, tile * 0.34), 0, Math.PI * 2);
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = groupColor(groupId);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Phase 4: recent conflict — a soft red halo that fades with the
+      // conflict-flash window.
+      if (agents.conflictFlash[i] === 1) {
+        const flash = conflictFlashColor();
+        if (flash !== null) {
+          ctx.beginPath();
+          ctx.arc(x, y, radius + Math.max(3, tile * 0.5), 0, Math.PI * 2);
+          ctx.fillStyle = flash;
+          ctx.fill();
+        }
+      }
 
       if (agents.ids[i] === selectedEntityId) {
         ctx.beginPath();

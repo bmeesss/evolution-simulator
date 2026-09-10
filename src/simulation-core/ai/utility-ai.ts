@@ -3,15 +3,16 @@
  * decision-making.
  *
  * Every tick, for every agent, this module:
- *   1. rebuilds the resource spatial index once (O(worldSize)),
- *   2. scores the six candidate actions with bounded [0, 1] utilities,
+ *   1. rebuilds the resource + agent spatial indexes once,
+ *   2. scores the twelve candidate actions with bounded [0, 1] utilities,
  *   3. applies deterministic tie-break noise + action hysteresis, and
  *   4. writes the winning intent (+ movement target) into the `intent` store.
  *
  * Decision vs. consequence: this module ONLY decides (and stores the decision).
- * The movement/resource/needs systems execute it. Utility scores are written to
- * the `aiState` store so the selected-agent debug view (and the determinism
- * tests) can inspect them — they are base scores, before noise/hysteresis.
+ * The movement/resource/needs/social systems execute it. Utility scores are
+ * written to the `aiState` store so the selected-agent debug view (and the
+ * determinism tests) can inspect them — they are base scores, before
+ * noise/hysteresis.
  *
  * Action model (see ARCHITECTURE.md §Utility AI):
  *   Rest      = fatigueUrgency(energy)
@@ -20,11 +21,21 @@
  *   SeekWater = thirstUrgency × bestWaterScore
  *   Eat       = hungerUrgency × foodPresence(own tile)      (stationary)
  *   Drink     = thirstUrgency × waterPresence(own tile)     (stationary)
+ *   SeekPartner = reproductionUrgency × partnerScore
+ *
+ * Phase 4 social actions (targets from the bounded social-targeting passes —
+ * a memory walk for Avoid/Confront, a spatial walk for the other three):
+ *   Socialize = lonelinessUrgency × socialDrive × safety × socialTargetScore
+ *   Help      = socialDrive × safety × helperCapacity × helpTargetScore
+ *   Cooperate = socialDrive × safety × forageNeed × cooperateTargetScore
+ *   Avoid     = threat × vulnerability        (flee from the most feared agent)
+ *   Confront  = gain × competition × grudge × edge × aggression (adults only;
+ *               see social-targeting.ts for the exact formula and rationale)
  *
  * Determinism: all randomness comes from the dedicated `ai` RNG stream (never
  * the platform RNG, never the spawn/world streams). The stream is consumed in
- * a fixed order per agent (six jitter draws, then any wander-target draws), so
- * re-running the same state always consumes the same numbers.
+ * a fixed order per agent (twelve jitter draws, then any wander-target draws),
+ * so re-running the same state always consumes the same numbers.
  */
 
 import type { EntityId } from '../ecs';
@@ -38,6 +49,8 @@ import { ResourceType, type ResourceType as ResourceTypeType } from './memory';
 import type { MemoryStore } from './memory';
 import type { ResourceIndex } from './perception';
 import type { AgentIndex } from './perception';
+import { findSocialTargets, socialTargets } from './social-targeting';
+import { areKin } from '../social/kinship';
 import { clamp01 } from './utility';
 import {
   fatigueUrgency,
@@ -48,6 +61,8 @@ import {
   explorationUncertainty,
   reproductionUrgency,
   partnerDesirability,
+  lonelinessUrgency,
+  socialDrive,
 } from './considerations';
 
 /** Reflect a value that fell outside [min, max] back inside (spreads wander targets). */
@@ -173,25 +188,12 @@ function findBestResource(
 const partnerScratch = { entityId: -1, x: 0, y: 0, score: -1 };
 
 /**
- * True when `a` and `b` are direct parent/child or share a parent (siblings).
- * The founding generation uses -1 sentinels for absent parents, so kin checks
- * involving a founder always return false. Cheap O(1) — no family graph, no
- * full ancestry walk (the spec explicitly avoids a full social/family graph).
+ * Kin check for the partner filter — thin wrapper over the shared kinship
+ * module (social/kinship.ts) so the social layer and the reproduction layer
+ * can never disagree about who is family.
  */
 function isKin(a: EntityId, b: EntityId, ecs: SimulationEcs): boolean {
-  const lin = ecs.lineage;
-  const aSlot = lin.index[a];
-  const bSlot = lin.index[b];
-  if (aSlot < 0 || bSlot < 0) return false;
-  const aA = lin.columns.parentA[aSlot];
-  const aB = lin.columns.parentB[aSlot];
-  const bA = lin.columns.parentA[bSlot];
-  const bB = lin.columns.parentB[bSlot];
-  if (aA === b || aB === b) return true; // a is parent of b
-  if (bA === a || bB === a) return true; // b is parent of a
-  if (aA >= 0 && (aA === bA || aA === bB)) return true; // share parent A
-  if (aB >= 0 && (aB === bA || aB === bB)) return true; // share parent B
-  return false;
+  return areKin(a, b, ecs);
 }
 
 /**
@@ -299,7 +301,7 @@ function findBestPartner(
 }
 
 export function selectIntents(ctx: TickContext): void {
-  const { ecs, world, config, aiRng, resourceIndex, agentIndex } = ctx;
+  const { ecs, world, config, aiRng, resourceIndex, agentIndex, socialIndex, tick } = ctx;
   const intent = ecs.intent;
   const needs = ecs.needs;
   const position = ecs.position;
@@ -317,9 +319,13 @@ export function selectIntents(ctx: TickContext): void {
   const noise = ai.tieBreakNoise;
   const maxX = world.width - 1;
   const maxY = world.height - 1;
+  const helpConfig = config.social.help;
+  const helperEnergySpan = 100 - helpConfig.minHelperEnergy;
+  const helperHealthSpan = 100 - helpConfig.minHelperHealth;
 
   resourceIndex.rebuild(world, minFood, minWater);
   agentIndex.rebuild(ecs);
+  socialIndex.rebuild(ecs);
 
   for (let i = 0; i < intent.count; i++) {
     const entity = intent.entityOf[i];
@@ -336,6 +342,11 @@ export function selectIntents(ctx: TickContext): void {
     const hunger = needs.columns.hunger[needsSlot];
     const thirst = needs.columns.thirst[needsSlot];
     const energy = needs.columns.energy[needsSlot];
+
+    // Urgency primitives (reused by survival AND social scoring).
+    const uHunger = hungerUrgency(hunger, config);
+    const uThirst = thirstUrgency(thirst, config);
+    const uFatigue = fatigueUrgency(energy, config);
 
     // --- Candidate resources (best food / best water, perception + memory) ---
     const hasFood = findBestResource(ResourceType.Food, x, y, entity, resourceIndex, world, memory, config);
@@ -355,11 +366,13 @@ export function selectIntents(ctx: TickContext): void {
     const currentHealth = healthSlot >= 0 ? ecs.health.columns.current[healthSlot] : 0;
     const fertility = genomeSlot >= 0 ? ecs.genome.columns.fertility[genomeSlot] : 0;
     const socialTendency = genomeSlot >= 0 ? ecs.genome.columns.socialTendency[genomeSlot] : 0;
+    const strength = genomeSlot >= 0 ? ecs.genome.columns.strength[genomeSlot] : 0;
+    const isAdult = isReproductiveStage(lifeStageForAge(ageHours, config));
 
     // Only adults/elderly in a safe survival state scan for a partner, so
     // children/adolescents/starving agents never cost the nearby-entity walk.
     const reproCapable =
-      isReproductiveStage(lifeStageForAge(ageHours, config)) &&
+      isAdult &&
       currentHealth >= config.reproduction.minHealthToReproduce &&
       energy >= config.reproduction.minEnergyToReproduce &&
       hunger < config.reproduction.maxNeedToReproduce &&
@@ -377,13 +390,30 @@ export function selectIntents(ctx: TickContext): void {
     const foodHere = world.food[tileIdx];
     const waterHere = world.water[tileIdx];
 
+    // --- Social targets: ONE bounded walk covers all five actions (Phase 4) --
+    const socialSlot = ecs.social.index[entity];
+    const loneliness = socialSlot >= 0 ? ecs.social.columns.loneliness[socialSlot] : 0;
+    findSocialTargets(
+      entity,
+      x,
+      y,
+      uHunger,
+      strength,
+      socialTendency,
+      isAdult,
+      ecs,
+      config,
+      socialIndex,
+      tick,
+    );
+
     // --- Base utilities (bounded to [0, 1]) ----------------------------------
-    const uRest = fatigueUrgency(energy, config);
+    const uRest = uFatigue;
     const uWander = ai.explorationDrive * explorationUncertainty(averageMemoryValue(memory, entity));
-    const uSeekFood = hungerUrgency(hunger, config) * foodScore;
-    const uSeekWater = thirstUrgency(thirst, config) * waterScore;
-    const uEat = foodHere >= minFood ? hungerUrgency(hunger, config) * clamp01(foodHere / eatAmount) : 0;
-    const uDrink = waterHere >= minWater ? thirstUrgency(thirst, config) * clamp01(waterHere / drinkAmount) : 0;
+    const uSeekFood = uHunger * foodScore;
+    const uSeekWater = uThirst * waterScore;
+    const uEat = foodHere >= minFood ? uHunger * clamp01(foodHere / eatAmount) : 0;
+    const uDrink = waterHere >= minWater ? uThirst * clamp01(waterHere / drinkAmount) : 0;
     const uSeekPartner = reproductionUrgency(
       ageHours,
       currentHealth,
@@ -395,6 +425,23 @@ export function selectIntents(ctx: TickContext): void {
       config,
     ) * partnerScore;
 
+    // Social utilities. `safety` is spare survival capacity (1 = comfortable,
+    // 0 = some need is critical): starving agents never socialize/help/
+    // cooperate, but they still FLEE (Avoid is not safety-gated).
+    const safety = Math.max(0, 1 - Math.max(uHunger, uThirst, uFatigue));
+    const drive = socialDrive(socialTendency);
+    const helperCapacity =
+      clamp01((energy - helpConfig.minHelperEnergy) / Math.max(1, helperEnergySpan)) *
+      clamp01((currentHealth - helpConfig.minHelperHealth) / Math.max(1, helperHealthSpan));
+    // Cooperation is foraging-motivated: mildly hungry agents may start,
+    // urgent hunger makes it compelling (0.3 base mirrors baseDrive patterns).
+    const forageNeed = 0.3 + 0.7 * uHunger;
+    const uSocialize = lonelinessUrgency(loneliness, config) * drive * safety * socialTargets.socializeScore;
+    const uHelp = drive * safety * helperCapacity * socialTargets.helpScore;
+    const uCooperate = drive * safety * forageNeed * socialTargets.cooperateScore;
+    const uAvoid = socialTargets.avoidScore;
+    const uConfront = socialTargets.confrontScore;
+
     // Persist base scores for the debug view and determinism tests.
     const aiSlot = aiState.index[entity];
     if (aiSlot >= 0) {
@@ -405,11 +452,16 @@ export function selectIntents(ctx: TickContext): void {
       aiState.columns.eat[aiSlot] = uEat;
       aiState.columns.drink[aiSlot] = uDrink;
       aiState.columns.seekPartner[aiSlot] = uSeekPartner;
+      aiState.columns.socialize[aiSlot] = uSocialize;
+      aiState.columns.help[aiSlot] = uHelp;
+      aiState.columns.cooperate[aiSlot] = uCooperate;
+      aiState.columns.avoid[aiSlot] = uAvoid;
+      aiState.columns.confront[aiSlot] = uConfront;
     }
 
     // --- Deterministic tie-break noise + action hysteresis ------------------
-    // Seven jitter draws per agent, in ActionKind order, every tick — unconditional
-    // so AI RNG consumption never depends on which branch wins.
+    // Twelve jitter draws per agent, in ActionKind order, every tick —
+    // unconditional so AI RNG consumption never depends on which branch wins.
     const nRest = (aiRng.nextFloat() * 2 - 1) * noise;
     const nWander = (aiRng.nextFloat() * 2 - 1) * noise;
     const nSeekFood = (aiRng.nextFloat() * 2 - 1) * noise;
@@ -417,6 +469,11 @@ export function selectIntents(ctx: TickContext): void {
     const nEat = (aiRng.nextFloat() * 2 - 1) * noise;
     const nDrink = (aiRng.nextFloat() * 2 - 1) * noise;
     const nSeekPartner = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nSocialize = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nHelp = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nCooperate = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nAvoid = (aiRng.nextFloat() * 2 - 1) * noise;
+    const nConfront = (aiRng.nextFloat() * 2 - 1) * noise;
 
     let winner: ActionKind = ActionKind.Rest;
     let best = uRest + nRest + (prevKind === AgentIntent.Rest ? hysteresis : 0);
@@ -449,6 +506,31 @@ export function selectIntents(ctx: TickContext): void {
     if (v > best) {
       best = v;
       winner = ActionKind.SeekPartner;
+    }
+    v = uSocialize + nSocialize + (prevKind === AgentIntent.Socialize ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.Socialize;
+    }
+    v = uHelp + nHelp + (prevKind === AgentIntent.Help ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.Help;
+    }
+    v = uCooperate + nCooperate + (prevKind === AgentIntent.Cooperate ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.Cooperate;
+    }
+    v = uAvoid + nAvoid + (prevKind === AgentIntent.Avoid ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.Avoid;
+    }
+    v = uConfront + nConfront + (prevKind === AgentIntent.Confront ? hysteresis : 0);
+    if (v > best) {
+      best = v;
+      winner = ActionKind.Confront;
     }
 
     // --- Choose/keep the movement target (action hysteresis for targets) ----
@@ -523,6 +605,85 @@ export function selectIntents(ctx: TickContext): void {
         }
         break;
       }
+      case ActionKind.Socialize:
+      case ActionKind.Help:
+      case ActionKind.Cooperate: {
+        // Pursue a social target. Keeping the previous target requires it to
+        // be alive AND the relationship to not have turned hostile — an agent
+        // never keeps socializing with someone it now fears.
+        let pursueId = -1;
+        if (
+          prevKind === winner &&
+          prevTargetEntity >= 0 &&
+          pursuitStillValid(entity, winner, prevTargetEntity, ecs, config)
+        ) {
+          pursueId = prevTargetEntity;
+        } else if (winner === ActionKind.Socialize && socialTargets.socializeId >= 0) {
+          pursueId = socialTargets.socializeId;
+          targetX = socialTargets.socializeX;
+          targetY = socialTargets.socializeY;
+        } else if (winner === ActionKind.Help && socialTargets.helpId >= 0) {
+          pursueId = socialTargets.helpId;
+          targetX = socialTargets.helpX;
+          targetY = socialTargets.helpY;
+        } else if (winner === ActionKind.Cooperate && socialTargets.cooperateId >= 0) {
+          pursueId = socialTargets.cooperateId;
+          targetX = socialTargets.cooperateX;
+          targetY = socialTargets.cooperateY;
+        }
+        if (pursueId >= 0) {
+          targetEntity = pursueId;
+          const pSlot = position.index[pursueId];
+          if (pSlot >= 0) {
+            targetX = position.columns.x[pSlot];
+            targetY = position.columns.y[pSlot];
+          }
+        }
+        break;
+      }
+      case ActionKind.Confront: {
+        // Chase the hostile rival (kept target only needs to stay alive).
+        let pursueId = -1;
+        if (prevKind === AgentIntent.Confront && prevTargetEntity >= 0 && ecs.entities.isAlive(prevTargetEntity)) {
+          pursueId = prevTargetEntity;
+        } else if (socialTargets.confrontId >= 0) {
+          pursueId = socialTargets.confrontId;
+          targetX = socialTargets.confrontX;
+          targetY = socialTargets.confrontY;
+        }
+        if (pursueId >= 0) {
+          targetEntity = pursueId;
+          const pSlot = position.index[pursueId];
+          if (pSlot >= 0) {
+            targetX = position.columns.x[pSlot];
+            targetY = position.columns.y[pSlot];
+          }
+        }
+        break;
+      }
+      case ActionKind.Avoid: {
+        // Flee: the movement target is a point AWAY from the most feared
+        // nearby agent, recomputed every tick (threats move). The flee
+        // distance reuses the wander-radius scale — no new tunable needed.
+        if (socialTargets.threatId >= 0) {
+          targetEntity = socialTargets.threatId;
+          const dx = x - socialTargets.threatX;
+          const dy = y - socialTargets.threatY;
+          const distSq = dx * dx + dy * dy;
+          if (distSq > 1e-9) {
+            const dist = Math.sqrt(distSq);
+            targetX = mirrorClamp(x + (dx / dist) * wanderRadius, 0, maxX);
+            targetY = mirrorClamp(y + (dy / dist) * wanderRadius, 0, maxY);
+          } else {
+            // Fully overlapping: deterministic diagonal push by entity parity.
+            const sign = entity % 2 === 0 ? 1 : -1;
+            const diagonal = wanderRadius * 0.7071;
+            targetX = mirrorClamp(x + sign * diagonal, 0, maxX);
+            targetY = mirrorClamp(y + sign * diagonal, 0, maxY);
+          }
+        }
+        break;
+      }
     }
 
     intent.columns.kind[i] = winner;
@@ -530,4 +691,25 @@ export function selectIntents(ctx: TickContext): void {
     intent.columns.targetY[i] = targetY;
     intent.columns.targetEntity[i] = targetEntity;
   }
+}
+
+/**
+ * May the agent keep pursuing `target` for a friendly social action? Requires
+ * the target to be alive and the relationship to not have turned hostile
+ * (below the confront hostility threshold) since the pursuit began.
+ */
+function pursuitStillValid(
+  self: EntityId,
+  kind: number,
+  target: EntityId,
+  ecs: SimulationEcs,
+  config: SimulationConfig,
+): boolean {
+  if (!ecs.entities.isAlive(target)) return false;
+  if (kind !== AgentIntent.Socialize && kind !== AgentIntent.Help && kind !== AgentIntent.Cooperate) {
+    return true;
+  }
+  const entry = ecs.relationships.find(self, target);
+  if (entry === -1) return true; // no relationship yet — nothing has soured
+  return ecs.relationships.scoreOf(entry) > -config.social.conflict.minHostility;
 }

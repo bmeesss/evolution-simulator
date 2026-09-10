@@ -177,3 +177,97 @@ export function partnerDesirability(
   const compatibility = 0.35 + 0.65 * social;
   return distance * (0.5 + 0.5 * healthFactor) * (0.5 + 0.5 * fertilityFactor) * compatibility;
 }
+
+// --- Phase 4: social considerations -----------------------------------------
+
+/**
+ * How urgently an agent wants company, from its loneliness (0..100).
+ *
+ * WHY quadratic above a threshold: mild loneliness should not interrupt
+ * foraging, but a chronically isolated agent becomes strongly motivated to
+ * seek others — the drive that makes socializing (and eventually groups)
+ * happen without any scripted rule.
+ */
+export function lonelinessUrgency(loneliness: number, config: SimulationConfig): number {
+  const threshold = config.social.loneliness.threshold;
+  if (loneliness <= threshold) return 0;
+  const span = 100 - threshold;
+  if (span <= 0) return 1;
+  return quadratic(clamp01((loneliness - threshold) / span));
+}
+
+/**
+ * How sociable an agent is by personality (genome socialTendency). Kept above
+ * zero: even unsocial agents socialize when extremely lonely — just less
+ * eagerly — so isolation is a gradient, not a caste.
+ */
+export function socialDrive(socialTendency: number): number {
+  return 0.25 + 0.75 * clamp01(socialTendency);
+}
+
+/**
+ * Map a relationship score in [−1, 1] to a [0, 1] affinity (0.5 = neutral).
+ * Used by socialize/cooperate targeting: friends are attractive, enemies are
+ * not, strangers land in the middle.
+ */
+/**
+ * How much an agent enjoys/wants contact with someone, from the relationship
+ * score. Asymmetric: positive bonds raise affinity toward 1, but negative
+ * scores collapse it FAST (zero at −0.25) — an agent does not socialize,
+ * help or cooperate with someone it blames, so grudges are not silently
+ * repaired by incidental contact. This asymmetry is what lets sustained
+ * competition build the hostility that Avoid/Confront act on.
+ */
+export function relationshipAffinity(score: number): number {
+  const clamped = score < -1 ? -1 : score > 1 ? 1 : score;
+  if (clamped >= 0) return clamp01(0.5 + 0.5 * clamped);
+  return clamp01(0.5 * (1 + clamped / 0.25));
+}
+
+/**
+ * How much a nearby agent needs help: the larger of its health and energy
+ * deficits, each shaped quadratic (helping someone marginally tired is not
+ * worth the trip; helping a collapsing agent is). Zero when comfortable.
+ */
+export function helpNeedFactor(health: number, energy: number, config: SimulationConfig): number {
+  const { healthNeedBelow, energyNeedBelow } = config.social.help;
+  const healthDeficit =
+    health < healthNeedBelow ? quadratic(clamp01((healthNeedBelow - health) / healthNeedBelow)) : 0;
+  const energyDeficit =
+    energy < energyNeedBelow ? quadratic(clamp01((energyNeedBelow - energy) / energyNeedBelow)) : 0;
+  return healthDeficit > energyDeficit ? healthDeficit : energyDeficit;
+}
+
+/**
+ * Threat posed by a nearby agent: proximity × hostility × distrust. A distant
+ * enemy, a tolerated rival (positive score) or a trusted agent all score low,
+ * so Avoid is reserved for genuinely feared individuals.
+ */
+export function threatFactor(distanceSquared: number, perceptionSquared: number, score: number, trust: number): number {
+  const proximity = distanceFactorSquared(distanceSquared, perceptionSquared);
+  const hostility = clamp01(-score);
+  const distrust = 1 - 0.5 * clamp01(trust);
+  return proximity * hostility * distrust;
+}
+
+/**
+ * How inclined an agent is to flee rather than stand its ground: weaker
+ * agents (relative to the threat) are more avoidant, strong agents only
+ * mildly so. Bounded [0.5, 1].
+ */
+export function vulnerabilityFactor(selfStrength: number, threatStrength: number): number {
+  const relative = clamp01(0.5 + 0.5 * (clamp01(selfStrength) - clamp01(threatStrength)));
+  return 1 - 0.5 * relative;
+}
+
+/**
+ * Confrontation appetite from the strength differential. Linear in the
+ * differential: equal-strength rivals still fight at half appetite (fights
+ * between peers happen), a clear edge makes confrontation attractive, and a
+ * disadvantage makes it distinctly unattractive. This is the "aggression"
+ * input the spec asks for, derived from the existing strength genome instead
+ * of a new gene.
+ */
+export function confrontationAdvantage(selfStrength: number, otherStrength: number): number {
+  return clamp01(0.5 + 0.5 * (clamp01(selfStrength) - clamp01(otherStrength)));
+}

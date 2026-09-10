@@ -23,5 +23,14 @@ export {
   explorationUncertainty,
   reproductionUrgency,
   partnerDesirability,
+  lonelinessUrgency,
+  socialDrive,
+  relationshipAffinity,
+  helpNeedFactor,
+  threatFactor,
+  vulnerabilityFactor,
+  confrontationAdvantage,
 } from './considerations';
 export { selectIntents } from './utility-ai';
+export { findSocialTargets, socialTargets } from './social-targeting';
+export type { SocialTargets } from './social-targeting';

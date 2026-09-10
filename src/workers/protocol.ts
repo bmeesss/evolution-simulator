@@ -17,7 +17,13 @@
  * the e2e smoke test).
  */
 
-import type { SimulationSaveState, DeterminismCheckResult, AgentDetails, SimulationSnapshot } from '../persistence';
+import type {
+  SimulationSaveState,
+  DeterminismCheckResult,
+  AgentDetails,
+  GroupDetails,
+  SimulationSnapshot,
+} from '../persistence';
 import type { SimulationEvent } from '../simulation-core';
 
 // --- Commands (main -> worker) ----------------------------------------------
@@ -28,6 +34,7 @@ export type SimulationCommand =
   | { type: 'set-speed'; multiplier: number }
   | { type: 'request-snapshot'; requestId?: number }
   | { type: 'get-agent'; entityId: number; requestId?: number }
+  | { type: 'get-group'; groupId: number; requestId?: number }
   | { type: 'request-save'; requestId?: number }
   | { type: 'verify-determinism'; seed?: number; ticks?: number; requestId?: number };
 
@@ -64,6 +71,8 @@ export type WorkerMessage =
   | { type: 'snapshot'; snapshot: SimulationSnapshot; events: SimulationEvent[]; debug: WorkerDebugStats }
   /** `entityId` echoes the requested id (the agent may no longer exist). */
   | { type: 'agent-details'; entityId: number; agent: AgentDetails | null; requestId?: number }
+  /** `groupId` echoes the requested id (the group may no longer exist). */
+  | { type: 'group-details'; groupId: number; group: GroupDetails | null; requestId?: number }
   | { type: 'save'; save: SimulationSaveState; requestId?: number }
   | { type: 'determinism-result'; result: DeterminismCheckResult; requestId?: number }
   | { type: 'error'; message: string };

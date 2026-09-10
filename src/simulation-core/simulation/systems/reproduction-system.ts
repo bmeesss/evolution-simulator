@@ -33,6 +33,7 @@ import { AgentIntent } from '../../ai';
 import { crossoverGenomes, mutateGenome } from '../../genetics';
 import type { GenomeValues } from '../../genetics';
 import { lifeStageForAge, isReproductiveStage } from '../life-stages';
+import { seedKinRelationships } from '../../social/kinship';
 import type { SimulationConfig } from '../config';
 
 /** Hard, deterministic "can this agent breed right now?" gate. */
@@ -131,6 +132,30 @@ function createChild(ctx: TickContext, parentA: EntityId, parentB: EntityId): En
 
   ecs.intent.attach(entity, { kind: AgentIntent.Wander, targetX: x, targetY: y, targetEntity: -1 });
   ecs.aiState.attach(entity);
+  ecs.social.attach(entity, {
+    loneliness: 0,
+    groupId: -1,
+    groupJoinTick: 0,
+    cooperationTarget: -1,
+    cooperationTicks: 0,
+    forageBonusTicks: 0,
+    lastConflictTick: 0,
+  });
+
+  // Kin awareness: the child and both parents remember each other with warm
+  // (but not maximal, and not unconditional) starting values. Siblings are
+  // recognized on contact via lineage instead of being pre-seeded.
+  const kinship = config.social.kinship;
+  seedKinRelationships(
+    ecs,
+    entity,
+    parentA,
+    parentB,
+    kinship.baseScore,
+    kinship.baseTrust,
+    kinship.baseFamiliarity,
+    ctx.tick,
+  );
 
   events.record('birth', {
     entityId: entity,

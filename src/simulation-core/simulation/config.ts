@@ -239,6 +239,177 @@ export interface MutationConfig {
   magnitude: number;
 }
 
+/**
+ * Social layer (Phase 4). Every tunable of the social simulation lives here:
+ * bounded relationship memory, social perception, the five social actions
+ * (Socialize / Help / Cooperate / Avoid / Confront), kinship biases and the
+ * emergent group system. All values are absolute so the social behavior of a
+ * run is fully reproducible from (seed, config).
+ */
+export interface SocialConfig {
+  /** Bounded social memory: relationships remembered per agent. */
+  memory: {
+    /** Maximum relationships one agent keeps (hard bound, LRU-style eviction). */
+    capacity: number;
+    /** Familiarity lost per in-game hour without contact. */
+    familiarityDecayPerHour: number;
+    /**
+     * Hostility (negative score) healed per in-game hour without renewed
+     * conflict — grudges fade, they are never permanently locked. Conflict
+     * damage far outpaces this, so actively contested pairs stay hostile.
+     */
+    hostilityDecayPerHour: number;
+    /** Prune when familiarity is below this AND |score| below pruneScore. */
+    pruneFamiliarity: number;
+    /** Prune when |score| is below this AND familiarity below pruneFamiliarity. */
+    pruneScore: number;
+    /** …and only when the last interaction is older than this many ticks. */
+    pruneAgeTicks: number;
+  };
+  /** Perceiving other agents (spatial-index backed, never O(n²)). */
+  perception: {
+    /** Radius (tiles) within which other agents are socially perceived. */
+    radiusTiles: number;
+    /** Radius (tiles) within which co-presence builds familiarity. */
+    presenceRadiusTiles: number;
+    /** Familiarity gained per tick of close co-presence. */
+    familiarityPerTickNear: number;
+    /** Upper bound on nearby candidates inspected per agent per pass. */
+    maxScan: number;
+  };
+  /** Shared reach for social interactions (socialize/help/cooperate/confront). */
+  interaction: {
+    radiusTiles: number;
+  };
+  /** Loneliness: the social need that drives Socialize. */
+  loneliness: {
+    /** Loneliness gained per in-game hour (scaled by social tendency). */
+    perHour: number;
+    /** Below this loneliness there is no urge to socialize. */
+    threshold: number;
+    /** Loneliness removed per in-reach socialize tick (initiator). */
+    reliefPerSocialize: number;
+    /** Loneliness removed for the passive partner of a socialize tick. */
+    reliefPerSocializePassive: number;
+  };
+  /** Socialize: spend time together to build bonds (cheap, common). */
+  socialize: {
+    /** Familiarity gained per interaction tick (both sides). */
+    familiarityGain: number;
+    /** Relationship score gained per interaction tick. */
+    scoreGain: number;
+    /** Trust gained per interaction tick. */
+    trustGain: number;
+    /** Affinity of a stranger (no relationship yet) — bootstraps first contact. */
+    strangerOpenness: number;
+  };
+  /** Help: costly support of an agent in need (reciprocity driver). */
+  help: {
+    /** Target counts as "in need" below this health (0..100). */
+    healthNeedBelow: number;
+    /** …or below this energy (0..100). */
+    energyNeedBelow: number;
+    /** Energy the helper pays per completed help (opportunity cost). */
+    energyCost: number;
+    /** Health the helped agent recovers. */
+    healthBenefit: number;
+    /** Energy the helped agent recovers. */
+    energyBenefit: number;
+    /** Trust the helped agent gains toward the helper (reciprocity core). */
+    trustGain: number;
+    /** Relationship score the helped agent gains toward the helper. */
+    scoreGainTarget: number;
+    /** Relationship score the helper gains toward the helped. */
+    scoreGainHelper: number;
+    /** Helpers must keep at least this energy (0..100) to consider helping. */
+    minHelperEnergy: number;
+    /** Helpers must keep at least this health (0..100) to consider helping. */
+    minHelperHealth: number;
+  };
+  /** Cooperate: forage together for a bounded session (repeated bonding). */
+  cooperation: {
+    /** Ticks of sustained proximity until a session completes. */
+    durationTicks: number;
+    /** Extra energy the cooperator pays per session tick (coordination cost). */
+    energyCostPerTick: number;
+    /** Relationship score gain on completion (both sides). */
+    scoreGain: number;
+    /** Trust gain on completion (both sides). */
+    trustGain: number;
+    /** Familiarity gain on completion (both sides). */
+    familiarityGain: number;
+    /** Cooperative-foraging efficiency bonus ticks granted to the cooperator. */
+    forageBonusTicks: number;
+    /** Hunger relief multiplier while the bonus is active (efficiency, not free food). */
+    forageBonusFactor: number;
+    /** Same bonus for the (passive) partner — smaller (they spent no energy). */
+    partnerForageBonusTicks: number;
+    /** No new session with the same partner until this many ticks passed. */
+    cooldownTicks: number;
+  };
+  /** Confront: interpersonal conflict over contested resources. */
+  conflict: {
+    /** Health lost by the loser per confrontation. */
+    damage: number;
+    /** Health lost by the winner (fighting is never free). */
+    damageToWinner: number;
+    /** Relationship score damage (both directions). */
+    scoreDamage: number;
+    /** Trust damage (both directions). */
+    trustDamage: number;
+    /** Distance (tiles) the loser is pushed away. */
+    knockbackTiles: number;
+    /** No second confrontation with the same agent until this many ticks passed. */
+    cooldownTicks: number;
+    /** Minimum hostility (−score) before confronting is considered at all. */
+    minHostility: number;
+    /** Relationship score lost when blaming a nearby agent for a depleted food patch. */
+    resentmentPerDepletion: number;
+    /** Relationship score lost when sharing a strained patch (less than one meal left). */
+    resentmentPerContest: number;
+    /** Radius (tiles) within which a failed forager blames a presumed competitor. */
+    resentmentRadiusTiles: number;
+    /** Minimum ticks between resentment events for the same pair. */
+    resentmentIntervalTicks: number;
+  };
+  /** Kinship: biases derived from lineage — never unconditional friendship. */
+  kinship: {
+    /** Starting score of a seeded parent↔child relationship. */
+    baseScore: number;
+    /** Starting trust of a seeded kin relationship. */
+    baseTrust: number;
+    /** Starting familiarity of a seeded kin relationship. */
+    baseFamiliarity: number;
+    /** Help utility multiplier for kin targets. */
+    helpBias: number;
+    /** Socialize utility multiplier for kin targets. */
+    socializeBias: number;
+    /** Confront utility is scaled DOWN by this for kin. */
+    confrontDampening: number;
+  };
+  /** Emergent group detection & membership (derived communities). */
+  groups: {
+    /** Detection runs every N ticks (never per tick — clustering is periodic). */
+    detectionIntervalTicks: number;
+    /** Clusters smaller than this never become groups. */
+    minSize: number;
+    /** Relationship score required for a social-graph edge. */
+    edgeScoreThreshold: number;
+    /** Edges additionally require members to be within this distance (tiles). */
+    maxMemberDistanceTiles: number;
+    /** Join a candidate group when joinUtility >= this. */
+    joinThreshold: number;
+    /** Leave a group when leaveUtility >= this. */
+    leaveThreshold: number;
+    /** Crowding discomfort starts above this member count. */
+    preferredSize: number;
+    /** Territory radius cap (tiles) — informational home region. */
+    maxTerritoryRadiusTiles: number;
+    /** Registry bound: no new groups form beyond this many concurrent groups. */
+    maxGroups: number;
+  };
+}
+
 export interface SimulationConfig {
   time: TimeConfig;
   world: WorldDimensions;
@@ -253,6 +424,7 @@ export interface SimulationConfig {
   mortality: MortalityConfig;
   metabolism: MetabolismConfig;
   mutation: MutationConfig;
+  social: SocialConfig;
 }
 
 /**
@@ -404,6 +576,109 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = deepFreeze({
   mutation: {
     perGeneProbability: 0.08,
     magnitude: 0.08,
+  },
+  social: {
+    memory: {
+      // 16 remembered others per agent: enough for a family + a band of
+      // regular contacts, bounded so social memory can never grow with the
+      // population (O(agents × capacity), never O(agents²)).
+      capacity: 16,
+      familiarityDecayPerHour: 0.01,
+      // A full grudge (−1) heals to zero in ~500 in-game hours (~3 weeks):
+      // grudges fade with time, but slowly — renewed competition always
+      // outpaces healing, abandoned ones linger, none are permanent.
+      hostilityDecayPerHour: 0.002,
+      pruneFamiliarity: 0.05,
+      pruneScore: 0.08,
+      // ~4 in-game days without contact and without bonds -> forgotten.
+      pruneAgeTicks: 384,
+    },
+    perception: {
+      // Same scale as the resource/partner perception: a full day of close
+      // co-presence (96 ticks) builds strong familiarity.
+      radiusTiles: 8,
+      presenceRadiusTiles: 3,
+      familiarityPerTickNear: 0.006,
+      maxScan: 32,
+    },
+    interaction: {
+      radiusTiles: 1.5,
+    },
+    loneliness: {
+      // ~50 in-game hours from fully content to fully lonely (scaled by
+      // social tendency), so socializing is a regular but not constant drive.
+      perHour: 2,
+      threshold: 25,
+      reliefPerSocialize: 22,
+      reliefPerSocializePassive: 8,
+    },
+    socialize: {
+      familiarityGain: 0.03,
+      scoreGain: 0.01,
+      trustGain: 0.004,
+      strangerOpenness: 0.4,
+    },
+    help: {
+      healthNeedBelow: 70,
+      energyNeedBelow: 40,
+      energyCost: 8,
+      healthBenefit: 6,
+      energyBenefit: 4,
+      trustGain: 0.12,
+      scoreGainTarget: 0.08,
+      scoreGainHelper: 0.04,
+      minHelperEnergy: 30,
+      minHelperHealth: 40,
+    },
+    cooperation: {
+      // Six in-game hours of foraging together completes a session.
+      durationTicks: 24,
+      energyCostPerTick: 0.6,
+      scoreGain: 0.15,
+      trustGain: 0.12,
+      familiarityGain: 0.06,
+      forageBonusTicks: 48,
+      forageBonusFactor: 0.5,
+      partnerForageBonusTicks: 24,
+      cooldownTicks: 96,
+    },
+    conflict: {
+      damage: 4,
+      damageToWinner: 1.5,
+      scoreDamage: 0.15,
+      trustDamage: 0.2,
+      knockbackTiles: 1.2,
+      // One confrontation per pair per in-game day: de-escalation, no spirals.
+      cooldownTicks: 96,
+      minHostility: 0.15,
+      // A forager that finds its patch stripped and a competitor present
+      // blames that competitor strongly (one such event is as damaging as a
+      // confrontation); sharing a strained patch is milder.
+      resentmentPerDepletion: 0.15,
+      resentmentPerContest: 0.08,
+      resentmentRadiusTiles: 3,
+      resentmentIntervalTicks: 16,
+    },
+    kinship: {
+      baseScore: 0.4,
+      baseTrust: 0.55,
+      baseFamiliarity: 0.9,
+      helpBias: 0.5,
+      socializeBias: 0.25,
+      confrontDampening: 0.75,
+    },
+    groups: {
+      // Community detection once per in-game day — periodic, never per tick.
+      detectionIntervalTicks: 96,
+      minSize: 3,
+      edgeScoreThreshold: 0.15,
+      maxMemberDistanceTiles: 14,
+      joinThreshold: 0.18,
+      leaveThreshold: 0.6,
+      preferredSize: 12,
+      maxTerritoryRadiusTiles: 20,
+      maxGroups: 64,
+    },
   },
 } satisfies SimulationConfig);
 

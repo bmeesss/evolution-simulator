@@ -14,7 +14,13 @@
 
 import { Simulation, World } from '../simulation-core';
 import type { SimulationConfig } from '../simulation-core';
-import type { RngState, SerializedEcs, SerializedWorld } from '../simulation-core';
+import type {
+  RngState,
+  SerializedEcs,
+  SerializedWorld,
+  SerializedGroupRegistry,
+  SerializedSocialStats,
+} from '../simulation-core';
 
 /**
  * Save format version. Bumped for Phase 2 (2): the layout now includes the AI
@@ -23,10 +29,18 @@ import type { RngState, SerializedEcs, SerializedWorld } from '../simulation-cor
  * adds the dedicated `repro` RNG stream, the lineage + reproductive component
  * stores (which carry generation, parents, sex, cooldown and eligibility), the
  * new `targetEntity` field on the intent store, the `seekPartner` AI column and
- * the life/reproduction/mortality/metabolism/mutation config sections. Versions
- * 1 and 2 saves are no longer loadable (the new sections are required).
+ * the life/reproduction/mortality/metabolism/mutation config sections. Bumped
+ * for Phase 4 (4): adds the `social` component store, the five new social
+ * intent kinds + aiState columns, the sparse relationship store, the emergent
+ * group registry (identity, membership, pending-cluster hysteresis), the
+ * cumulative social statistics and the `social` config section. Versions 1–3
+ * saves are no longer loadable (the new sections are required).
+ *
+ * Phase 4 deliberately introduces NO new RNG stream: social decisions consume
+ * the existing `ai` stream (twelve tie-break draws per agent per tick) and
+ * every social system is otherwise deterministic given state.
  */
-export const SAVE_FORMAT_VERSION = 3;
+export const SAVE_FORMAT_VERSION = 4;
 
 export interface SimulationSaveState {
   readonly version: number;
@@ -36,6 +50,8 @@ export interface SimulationSaveState {
   readonly rng: { sim: RngState; spawn: RngState; ai: RngState; repro: RngState };
   readonly world: SerializedWorld;
   readonly ecs: SerializedEcs;
+  readonly groups: SerializedGroupRegistry;
+  readonly socialStats: SerializedSocialStats;
 }
 
 export function serializeSimulation(sim: Simulation): SimulationSaveState {
@@ -47,6 +63,8 @@ export function serializeSimulation(sim: Simulation): SimulationSaveState {
     rng: sim.getRngStates(),
     world: sim.world.serialize(),
     ecs: sim.ecs.serialize(),
+    groups: sim.getSerializedGroups(),
+    socialStats: sim.getSerializedSocialStats(),
   };
 }
 
@@ -64,6 +82,8 @@ export function deserializeSimulation(save: SimulationSaveState): Simulation {
     tickCount: save.tick,
     rngStates: save.rng,
     ecs: save.ecs,
+    groups: save.groups,
+    socialStats: save.socialStats,
   });
 }
 

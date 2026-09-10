@@ -18,6 +18,7 @@ import { Simulation, DEFAULT_SIMULATION_CONFIG } from '../simulation-core';
 import type { SimulationConfig } from '../simulation-core';
 import {
   buildAgentDetails,
+  buildGroupDetails,
   buildSimulationSnapshot,
   runDeterminismCheck,
   serializeSimulation,
@@ -149,6 +150,17 @@ export class WorkerEngine {
           type: 'agent-details',
           entityId: command.entityId,
           agent: buildAgentDetails(sim, command.entityId),
+          requestId: command.requestId,
+        });
+        return;
+      }
+      case 'get-group': {
+        const sim = this.requireSim();
+        if (!sim) return;
+        this.host.emit({
+          type: 'group-details',
+          groupId: command.groupId,
+          group: buildGroupDetails(sim, command.groupId),
           requestId: command.requestId,
         });
         return;

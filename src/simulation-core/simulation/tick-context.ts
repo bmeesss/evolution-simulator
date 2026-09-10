@@ -17,6 +17,7 @@ import type { World } from '../world';
 import type { SimulationConfig } from './config';
 import type { ResourceIndex, AgentIndex } from '../ai/perception';
 import type { EventLog } from '../events';
+import type { GroupRegistry, SocialStats } from '../social';
 
 export interface TickContext {
   readonly ecs: SimulationEcs;
@@ -33,6 +34,12 @@ export interface TickContext {
   readonly resourceIndex: ResourceIndex;
   /** World-grid spatial lookup for agents rebuilt each tick (partner search). */
   readonly agentIndex: AgentIndex;
+  /** World-grid spatial lookup for agents within social perception (Phase 4). */
+  readonly socialIndex: AgentIndex;
+  /** Emergent group registry — derived social communities (Phase 4). */
+  readonly groups: GroupRegistry;
+  /** Cumulative social counters (Phase 4). */
+  readonly socialStats: SocialStats;
   /** In-game hours advanced by one tick (= config.time.hoursPerTick). */
   readonly dtHours: number;
   /** Tick currently being processed (updated at the start of every step). */
